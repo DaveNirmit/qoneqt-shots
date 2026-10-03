@@ -50,6 +50,9 @@ class GeminiService {
   get key() { return CONFIG.GEMINI.API_KEY; }
   isConfigured() { return Boolean(this.key); }
   canMakeVideo() { return this.isConfigured() && CONFIG.GEMINI.VIDEO_ENABLED; }
+  // Image generation is not on every tier; after a "limit: 0" answer, skip Gemini images for 10 minutes.
+  imageBlockedUntil = 0;
+  canMakeImages() { return this.isConfigured() && Date.now() > this.imageBlockedUntil; }
 
   async request(pathname, { method = 'GET', body, timeoutMs = 60000, raw = false } = {}) {
     const url = pathname.startsWith('http') ? pathname : `${BASE}/${pathname}`;
@@ -101,7 +104,8 @@ class GeminiService {
   async withRetry(fn, { tries = 3, baseMs = 8000 } = {}) {
     for (let i = 0; ; i++) {
       try { return await fn(); } catch (err) {
-        const retriable = err.status === 429 || err.status === 503 || /quota|rate|overloaded|resource exhausted|unavailable/i.test(err.message);
+        // "limit: 0" means the tier does not include this model at all; waiting will not help.
+        const retriable = !/limit: 0/i.test(err.message) && (err.status === 429 || err.status === 503 || /quota|rate|overloaded|resource exhausted|unavailable/i.test(err.message));
         if (!retriable || i >= tries - 1) throw err;
         console.warn(`[Gemini] ${err.message}. Retrying in ${(baseMs * (i + 1)) / 1000}s`);
         await sleep(baseMs * (i + 1));
@@ -126,7 +130,7 @@ class GeminiService {
         token = d.nextPageToken;
       } while (token && names.size < 3000);
       const listed = Object.fromEntries(Object.entries(models).map(([k, id]) => [k, names.has(id)]));
-      return { configured: true, valid: true, models, listed, videoEnabled: CONFIG.GEMINI.VIDEO_ENABLED };
+      return { configured: true, valid: true, models, listed, videoEnabled: CONFIG.GEMINI.VIDEO_ENABLED, imageBlocked: Date.now() < this.imageBlockedUntil };
     } catch (err) {
       return { configured: true, valid: false, error: err.message, models };
     }
@@ -150,7 +154,9 @@ class GeminiService {
   /** Generates a 9:16 image and stores it in the image cache. */
   async generateImage(prompt, nameHint = 'scene') {
     const model = CONFIG.GEMINI.IMAGE_MODEL;
-    const img = await this.withRetry(() => this.firstWorking([
+    let img;
+    try {
+      img = await this.withRetry(() => this.firstWorking([
       async () => findImage(await this.request('interactions', {
         method: 'POST', timeoutMs: 120000,
         body: {
@@ -166,7 +172,11 @@ class GeminiService {
           generationConfig: { responseModalities: ['IMAGE'], imageConfig: { aspectRatio: '9:16' } },
         },
       })) || Promise.reject(new Error('No image in generateContent response')),
-    ]));
+      ]));
+    } catch (err) {
+      if (/limit: 0|free tier/i.test(err.message)) this.imageBlockedUntil = Date.now() + 10 * 60 * 1000;
+      throw err;
+    }
     const ext = img.mime.includes('png') ? 'png' : 'jpg';
     const safe = String(nameHint).toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 40) || 'scene';
     const filename = `gem_${safe}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.${ext}`;

@@ -86,7 +86,8 @@ export default function SystemPage({ doctor, shots, onRefresh, onRefreshShots })
           </Badge>}>
           <Row k="API key" v={!shots ? '...' : shots.configured ? 'Set in .env' : 'Not set'} />
           <Row k="Scene director" v={`${shots?.models?.text || ''}${shots?.listed && !shots.listed.text ? ' (not visible to this key)' : ''}`} />
-          <Row k="Image model" v={`${shots?.models?.image || ''}${shots?.listed && !shots.listed.image ? ' (not visible to this key)' : ''}`} />
+          <Row k="Images" v={shots?.imageBlocked ? 'Not included in this tier. Using Pollinations (free)' : `${shots?.models?.image || ''}, else Pollinations (free)`} />
+          <Row k="Image generator" v={shots?.pollinationsToken ? 'Pollinations, free account token (fast, no watermark)' : 'Pollinations, anonymous (about one image per 15 s)'} />
           <Row k="Video model (Veo)" v={shots?.videoEnabled === false ? 'Off (GEMINI_VIDEO=off)' : `${shots?.models?.video || ''}${shots?.listed && !shots.listed.video ? ' (needs billing)' : ''}`} />
           {shots?.error && <p className="mt-3 text-[12px] text-bad">{shots.error}</p>}
           {shots && !shots.configured && (

@@ -16,7 +16,7 @@ function readiness(doctor, shots) {
   const cloud = {
     icon: Sparkles, name: 'Scene and image AI (Gemini)',
     tone: !shots ? 'idle' : shots.valid ? 'ok' : shots.configured ? 'bad' : 'warn',
-    value: !shots ? 'Checking...' : shots.valid ? `${shots.models?.image || 'ready'}${shots.videoEnabled ? ' · Veo video on' : ''}`
+    value: !shots ? 'Checking...' : shots.valid ? `Scenes: ${shots.models?.text || 'Gemini'}. Images: ${shots.imageBlocked ? 'Pollinations (free)' : 'Gemini, or Pollinations if refused'}`
       : shots.configured ? 'Key rejected. Check GEMINI_API_KEY in .env' : 'No key. Scenes use the local AI and stock images',
   };
   const voices = doctor?.speech?.voices || [];

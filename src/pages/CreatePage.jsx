@@ -173,7 +173,7 @@ export default function CreatePage({ draft, engine, voices, shots, onSaved, onNe
       let scenes = res.scenes.map((s) => ({ ...s, imageUrl: null, imageLocalPath: null }));
       setProject((p) => ({ ...p, scenes, shotsGenerated: true, shotsProvider: res.provider }));
       for (let i = 0; i < scenes.length; i++) {
-        setProgress(`Creating image ${i + 1} of ${scenes.length}`);
+        setProgress(`Creating image ${i + 1} of ${scenes.length}${shots?.pollinationsToken ? '' : ' (free image service: up to a minute each)'}`);
         try {
           const img = await generateShotImage({ prompt: scenes[i].visualDescription, text: scenes[i].onScreenText, narration: scenes[i].narration, topic: project.title, index: i, exclude: scenes.flatMap((x) => [x.imageLocalPath, x.imageUrl]).filter(Boolean) });
           scenes = scenes.map((s, j) => (j === i ? { ...s, imageUrl: img.url, imageLocalPath: img.localPath, imageProvider: img.provider } : s));
@@ -310,7 +310,7 @@ export default function CreatePage({ draft, engine, voices, shots, onSaved, onNe
             <div className="eyebrow">How a Shot is made</div>
             <ol className="mt-4 space-y-4">
               {[['Brief', engine.mode === 'ai' ? `${engine.detail} on this computer turns your words into a hook, key points and a caption.` : 'The local AI is offline, so a template brief is used. Start Ollama in System for real AI.'],
-                ['Scenes', cloud ? 'Gemini directs each scene and creates its image.' : 'Add a Gemini key in System to direct scenes and create images with AI.'],
+                ['Scenes', cloud ? 'Gemini directs each scene; a free image generator paints each one, which can take a while per image.' : 'Add a Gemini key in System to direct scenes with AI. Images come from a free generator.'],
                 ['Video', cloud && shots?.videoEnabled ? 'Veo animates each scene; narration and captions are added locally.' : 'Scenes get motion, narration and captions locally with FFmpeg.']].map(([t, d], i) => (
                 <li key={t} className="flex gap-3">
                   <span className="w-5 h-5 rounded-full bg-[#EFEDE7] grid place-items-center font-mono text-[11px] shrink-0">{i + 1}</span>

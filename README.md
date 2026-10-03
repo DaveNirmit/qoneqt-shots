@@ -53,7 +53,13 @@ Requirements: Node.js 20 or newer, and about 3 GB of free disk space.
    GEMINI_VIDEO=off
    ```
 
-   Get a key at https://aistudio.google.com/apikey. The free tier covers scene writing and image generation. `GEMINI_VIDEO=off` keeps the paid Veo video model switched off; scenes get motion locally instead.
+   Get a key at https://aistudio.google.com/apikey. The free tier covers scene writing. Google's free tier does not include image generation, so scene images come from Pollinations (free, no key). `GEMINI_VIDEO=off` keeps the paid Veo video model switched off; scenes get motion locally instead.
+
+   Optional: for faster, watermark-free images, create a free account at https://auth.pollinations.ai and add its token to `.env`:
+
+   ```
+   POLLINATIONS_TOKEN=your-token-here
+   ```
 
 5. Start the studio:
 
@@ -78,7 +84,8 @@ Everything you make is saved in the Library.
 | Part | Runs | Needs internet |
 |---|---|---|
 | Script brief | Locally, Ollama (`qwen2.5:1.5b`) | No |
-| Scene direction and images | Gemini API (free tier) | Yes. Without a key: local model and stock image search |
+| Scene direction | Gemini API (free tier) | Yes. Without a key: the local model |
+| Scene images | Pollinations (free; optional account token), Gemini if your tier allows it | Yes. Fallback: Wikimedia Commons photos |
 | Narration | edge-tts neural voices, Windows voices as offline fallback | Yes for neural voices |
 | Video render | Locally, bundled FFmpeg | No |
 | Trends | Hacker News, BBC and GDELT public feeds | Yes |
@@ -117,4 +124,4 @@ public/shots/      Example frames used on the landing page
 
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE).

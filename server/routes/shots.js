@@ -1,3 +1,6 @@
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
 import express from 'express';
 import { geminiService } from '../services/geminiService.js';
 import { ollamaService } from '../services/ollamaService.js';
@@ -92,7 +95,7 @@ const clean = (scenes, count) => (scenes || []).slice(0, count).map((s) => ({
 
 /** GET /api/shots/status: is a Gemini key configured and valid? */
 router.get('/status', async (req, res) => {
-  res.json(await geminiService.status());
+  res.json({ ...(await geminiService.status()), pollinationsToken: Boolean(CONFIG.POLLINATIONS_TOKEN) });
 });
 
 /** POST /api/shots/scenes: brief -> N distinct scenes (Gemini, else the local model, else the brief itself). */
@@ -146,32 +149,101 @@ router.post('/scenes', async (req, res) => {
   res.json({ scenes, provider: 'template', notes });
 });
 
-/** POST /api/shots/image: one 9:16 scene image (Gemini, else open-source image search, never one already used). */
+// Content hash of a cached image, so two differently named copies of the same picture count as the same.
+const fileHash = (p) => {
+  try { return p && fs.existsSync(p) ? crypto.createHash('sha1').update(fs.readFileSync(p)).digest('hex') : null; } catch { return null; }
+};
+
+// Free image generation from the full scene description. A different seed gives a different picture.
+// Anonymous use allows about one image every 45 s (measured; the docs say 15 s) and adds a small watermark
+// (cropped away by the renderer, which is why we ask for 1360 px tall). A free account token
+// (auth.pollinations.ai, POLLINATIONS_TOKEN in .env) allows one per 5 s without the watermark.
+// Requests are spaced out and retried on 402/429.
+let nextPollinationsAt = 0;
+async function pollinationsImage(prompt, nameHint, seed) {
+  const token = CONFIG.POLLINATIONS_TOKEN;
+  const gapMs = token ? 5500 : 45000;
+  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt.slice(0, 600))}?width=720&height=1360&seed=${seed}&nologo=true&private=true&model=flux`;
+  const headers = { 'User-Agent': 'QoneqtShots/1.0', ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const wait = nextPollinationsAt - Date.now();
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 60000);
+    try {
+      nextPollinationsAt = Date.now() + gapMs;
+      const r = await fetch(url, { signal: ctrl.signal, headers });
+      if (r.status === 402 || r.status === 429) {
+        nextPollinationsAt = Date.now() + gapMs * (attempt + 1); // back off harder each time
+        console.warn(`[Shots] Pollinations busy (HTTP ${r.status}); retry ${attempt + 1}/3 in ${Math.round((nextPollinationsAt - Date.now()) / 1000)}s`);
+        continue;
+      }
+      if (!r.ok || !String(r.headers.get('content-type') || '').startsWith('image/')) {
+        console.warn(`[Shots] Pollinations answered HTTP ${r.status}`);
+        return null;
+      }
+      const buf = Buffer.from(await r.arrayBuffer());
+      if (buf.length < 4000) return null;
+      const safe = String(nameHint).toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 40) || 'scene';
+      const filename = `pol_${safe}_${Date.now()}_${seed}.jpg`;
+      const localPath = path.join(CONFIG.STORAGE.CACHE_DIR, 'images', filename);
+      fs.mkdirSync(path.dirname(localPath), { recursive: true });
+      fs.writeFileSync(localPath, buf);
+      return { url: `/api/visuals/image/${filename}`, localPath, provider: 'pollinations' };
+    } catch (err) {
+      console.warn('[Shots] Pollinations failed:', err.message);
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return null;
+}
+
+/**
+ * POST /api/shots/image: one 9:16 scene image.
+ * Gemini when the key's tier allows it, else Pollinations (free, no key), else image search.
+ * Never returns a picture whose content matches one already used in this project.
+ */
 router.post('/image', async (req, res) => {
   const { prompt = '', text = '', narration = '', topic = '', index = 0, exclude = [] } = req.body || {};
-  const used = new Set((Array.isArray(exclude) ? exclude : []).map((v) => String(v).split('?')[0]));
-  const isUsed = (v) => used.has(String(v.localPath || '')) || used.has(String(v.url || '').split('?')[0]);
+  const usedHashes = new Set((Array.isArray(exclude) ? exclude : []).map(fileHash).filter(Boolean));
+  const isUsed = (localPath) => usedHashes.has(fileHash(localPath));
 
   // Give the image model the whole picture: the video's topic, this scene's caption and what it shows.
   const subject = String(prompt || narration || text || topic).trim();
-  if (geminiService.isConfigured() && subject) {
+  const full = [
+    `Photorealistic vertical 9:16 photograph for a short video about "${topic || subject}".`,
+    `Scene ${Number(index) + 1}${text ? `, titled "${text}"` : ''}: ${subject}.`,
+    'Cinematic natural light, sharp focus, one clear subject filling the frame. No text, letters, captions, logos or watermarks.',
+  ].join(' ');
+
+  if (geminiService.canMakeImages() && subject) {
     try {
-      const full = [
-        `Photorealistic vertical 9:16 photograph for a short video about "${topic || subject}".`,
-        `Scene ${Number(index) + 1}${text ? `, titled "${text}"` : ''}: ${subject}.`,
-        'Cinematic natural light, sharp focus, one clear subject filling the frame. No text, letters, captions, logos or watermarks.',
-      ].join(' ');
       return res.json(await geminiService.generateImage(full, topic));
     } catch (err) {
-      console.warn('[Shots] Gemini image failed, using image search:', err.message);
+      console.warn('[Shots] Gemini image unavailable, using Pollinations:', err.message);
     }
   }
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const seed = (Number(index) + 1) * 1000 + Math.floor(Math.random() * 1000);
+    const made = await pollinationsImage(full, topic, seed);
+    if (!made) break; // the generator is unavailable right now; use real photos instead
+    if (!isUsed(made.localPath)) return res.json(made);
+  }
+
+  // Last resort: real photos from Wikimedia Commons, skipping any already used in this project.
   try {
-    let visual = null;
-    for (let k = 0; k < 4; k++) {
-      visual = await visualService.getSceneVisual(text || prompt, topic, Number(index) + k * 7, { variation: Math.floor(Math.random() * 1000), forceRegenerate: k > 0 });
-      if (!isUsed(visual)) break;
+    const keywords = visualService.extractKeywords(text || prompt, topic);
+    const hits = await visualService.searchWikimediaImages(keywords, 12);
+    for (let k = 0; k < hits.length; k++) {
+      const pick = hits[(Number(index) + k) % hits.length];
+      const saved = await visualService.fetchAndCacheImage(pick, `wiki_${Date.now()}_${k}.jpg`);
+      if (saved && !isUsed(saved)) return res.json({ url: `/api/visuals/image/${path.basename(saved)}`, localPath: saved, provider: 'search' });
     }
+    const visual = await visualService.getSceneVisual(text || prompt, topic, Number(index), { forceRegenerate: true });
     res.json({ url: visual.url, localPath: visual.localPath, provider: 'search' });
   } catch (err) {
     res.status(500).json({ error: err.message });

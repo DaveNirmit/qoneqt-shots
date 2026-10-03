@@ -23,6 +23,8 @@ export const CONFIG = {
     VIDEO_MODEL: process.env.GEMINI_VIDEO_MODEL || 'veo-3.1-fast-generate-preview',
     VIDEO_ENABLED: process.env.GEMINI_VIDEO !== 'off'
   },
+  // Optional free account token from auth.pollinations.ai: faster image generation without the watermark.
+  POLLINATIONS_TOKEN: process.env.POLLINATIONS_TOKEN || '',
   SUPPORTED_MODELS: [
     {
       id: 'qwen2.5:1.5b',
