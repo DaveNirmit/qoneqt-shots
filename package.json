@@ -1,0 +1,49 @@
+{
+  "name": "qoneqt-shots",
+  "version": "1.0.0",
+  "description": "A polished, local-first AI video studio for the Qoneqt hackathon",
+  "private": true,
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node scripts/start.js",
+    "setup": "node scripts/setup.js",
+    "doctor": "node scripts/doctor.js",
+    "test:verify": "node scripts/verify-all.js",
+    "dev:server": "node server/index.js",
+    "dev:client": "vite",
+    "dev": "concurrently \"node server/index.js\" \"vite\"",
+    "build": "vite build"
+  },
+  "keywords": [
+    "qoneqt",
+    "local-ai",
+    "video-studio",
+    "ollama",
+    "shorts",
+    "reels",
+    "vertical-video"
+  ],
+  "author": "Qoneqt Forge Builder",
+  "license": "MIT",
+  "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "@ffprobe-installer/ffprobe": "^2.1.2",
+    "concurrently": "^10.0.5",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "fast-xml-parser": "^5.11.2",
+    "fluent-ffmpeg": "^2.1.3",
+    "lucide-react": "^1.50.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@vitejs/plugin-react": "^6.1.1",
+    "autoprefixer": "^10.6.1",
+    "postcss": "^8.5.28",
+    "tailwindcss": "^4.3.3",
+    "vite": "^8.3.2"
+  }
+}

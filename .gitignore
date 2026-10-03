@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Generated media and user data (kept local)
+server/data/cache/
+server/data/exports/
+server/data/videos/
+server/data/jobs/
+server/data/projects/
+!server/data/qoneqt-trends.json
+
+# Logs and OS files
+npm-debug.log*
+.DS_Store
+Thumbs.db

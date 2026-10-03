@@ -1,0 +1,256 @@
+import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
+import { spawn } from 'child_process';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { CONFIG } from '../config.js';
+import { ttsService } from './ttsService.js';
+import { visualService } from './visualService.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+class VideoRenderer {
+  constructor() {
+    this.exportsDir = CONFIG.STORAGE.EXPORTS_DIR;
+    this.cacheDir = CONFIG.STORAGE.CACHE_DIR;
+    this.ffmpegPath = ffmpegInstaller.path;
+
+    if (!fs.existsSync(this.exportsDir)) {
+      fs.mkdirSync(this.exportsDir, { recursive: true });
+    }
+    if (!fs.existsSync(this.cacheDir)) {
+      fs.mkdirSync(this.cacheDir, { recursive: true });
+    }
+  }
+
+  getFFmpegInfo() {
+    return {
+      available: Boolean(this.ffmpegPath && fs.existsSync(this.ffmpegPath)),
+      path: this.ffmpegPath,
+      version: ffmpegInstaller.version || 'bundled-static'
+    };
+  }
+
+  runFFmpeg(args) {
+    return new Promise((resolve, reject) => {
+      console.log(`[FFmpeg] Spawning: ${this.ffmpegPath} ${args.slice(0, 8).join(' ')}...`);
+      const child = spawn(this.ffmpegPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      let stderr = '';
+      child.stderr.on('data', (d) => { stderr += d.toString(); });
+      child.on('close', (code) => {
+        if (code === 0) resolve({ success: true });
+        else reject(new Error(`FFmpeg exited code ${code}: ${stderr.slice(-600)}`));
+      });
+      child.on('error', (err) => reject(err));
+    });
+  }
+
+  // Render a single scene: Image + Ken Burns zoompan + Spoken Audio + On-screen Text
+  async renderSceneClip(scene, sceneIdx, projectTitle, voice = 'en-US-ChristopherNeural') {
+    const sceneDuration = Math.max(3, Math.min(12, Number(scene.duration) || 5));
+    const frames = sceneDuration * 30; // 30 fps
+    const timestamp = Date.now();
+    const clipOut = path.join(this.cacheDir, `scene_clip_${sceneIdx}_${timestamp}.mp4`);
+
+    // 1. Get or generate visual image
+    let imgPath = scene.imageLocalPath;
+    if (!imgPath || !fs.existsSync(imgPath)) {
+      const visual = await visualService.getSceneVisual(
+        scene.onScreenText || scene.visualDescription,
+        projectTitle,
+        sceneIdx
+      );
+      imgPath = visual.localPath;
+    }
+
+    // 2. Synthesize audio
+    let audioPath = null;
+    if (scene.narration && voice !== 'none') {
+      const audioResult = await ttsService.generateSpeechWav(scene.narration, voice);
+      if (audioResult?.filePath && fs.existsSync(audioResult.filePath)) {
+        audioPath = audioResult.filePath;
+      }
+    }
+
+    // Clean text for FFmpeg drawtext
+    const rawText = (scene.onScreenText || scene.text || 'SCENE HOOK')
+      .replace(/\\n|[\r\n]+/g, ' ')
+      .replace(/%/g, ' percent')
+      .replace(/[:\\']/g, ' ')
+      .trim();
+
+    // Ken Burns zoompan filter
+    const zoomExpr = sceneIdx % 2 === 0
+      ? "min(zoom+0.0015,1.25)" // Zoom in
+      : "max(1.25-0.0015*on,1.0)"; // Zoom out
+    const panX = sceneIdx % 2 === 0 ? "iw/2-(iw/zoom/2)" : "iw/4";
+    const panY = "ih/2-(ih/zoom/2)";
+
+    const fontArg = fs.existsSync("C:/Windows/Fonts/segoeuib.ttf")
+      ? ":fontfile='C\\:/Windows/Fonts/segoeuib.ttf'"
+      : fs.existsSync("C:/Windows/Fonts/arialbd.ttf")
+      ? ":fontfile='C\\:/Windows/Fonts/arialbd.ttf'"
+      : "";
+
+    const hasRealVideo = Boolean(
+      scene.videoLocalPath &&
+      fs.existsSync(scene.videoLocalPath) &&
+      fs.statSync(scene.videoLocalPath).size > 10000
+    );
+
+    let vf = [];
+    if (hasRealVideo) {
+      vf = [
+        "scale=720:1280:force_original_aspect_ratio=increase",
+        "crop=720:1280",
+        `drawtext=text='QONEQT SHOTS'${fontArg}:fontcolor=white@0.75:fontsize=15:x=(w-text_w)/2:y=65:shadowcolor=black@0.6:shadowx=1:shadowy=1`,
+        `drawtext=text='${rawText}'${fontArg}:fontcolor=white:fontsize=32:x=(w-text_w)/2:y=h*0.62:borderw=4:bordercolor=black:shadowcolor=black@0.85:shadowx=2:shadowy=2:box=1:boxcolor=black@0.45:boxborderw=10`
+      ].join(',');
+    } else {
+      vf = [
+        "scale=720:1280:force_original_aspect_ratio=increase",
+        "crop=720:1280",
+        `zoompan=z='${zoomExpr}':x='${panX}':y='${panY}':d=${frames}:s=720x1280:fps=30`,
+        `drawtext=text='QONEQT SHOTS'${fontArg}:fontcolor=white@0.75:fontsize=15:x=(w-text_w)/2:y=65:shadowcolor=black@0.6:shadowx=1:shadowy=1`,
+        `drawtext=text='${rawText}'${fontArg}:fontcolor=white:fontsize=32:x=(w-text_w)/2:y=h*0.62:borderw=4:bordercolor=black:shadowcolor=black@0.85:shadowx=2:shadowy=2:box=1:boxcolor=black@0.45:boxborderw=10`
+      ].join(',');
+    }
+
+    const args = ['-y'];
+
+    if (hasRealVideo) {
+      args.push('-stream_loop', '-1', '-i', scene.videoLocalPath);
+    } else if (imgPath && fs.existsSync(imgPath)) {
+      args.push('-loop', '1', '-i', imgPath);
+    } else {
+      // Color fallback if no image
+      args.push('-f', 'lavfi', '-i', `color=c=0x0f172a:s=720x1280:d=${sceneDuration}`);
+    }
+
+    if (audioPath && fs.existsSync(audioPath)) {
+      args.push('-i', audioPath);
+    } else {
+      // Silent audio generator so concat never fails
+      args.push('-f', 'lavfi', '-i', `anullsrc=r=44100:cl=stereo`);
+    }
+
+    args.push(
+      // Always use input 0's picture and input 1's audio (ignores audio baked into AI video clips)
+      '-map', '0:v:0',
+      '-map', '1:a:0',
+      '-t', `${sceneDuration}`,
+      '-vf', vf,
+      '-c:v', 'libx264',
+      '-preset', 'fast',
+      '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac',
+      '-b:a', '192k',
+      '-shortest',
+      clipOut
+    );
+
+    await this.runFFmpeg(args);
+    return clipOut;
+  }
+
+  // Concatenate multiple scene clips into the final master video
+  async renderProjectToMP4(project, onProgress = null) {
+    if (!project || !Array.isArray(project.scenes) || project.scenes.length === 0) {
+      throw new Error('Project must contain at least one scene');
+    }
+
+    const timestamp = Date.now();
+    const finalFilename = `qoneqt_forge_${project.id || 'reel'}_${timestamp}.mp4`;
+    const finalOutputPath = path.join(this.exportsDir, finalFilename);
+    const sceneClips = [];
+
+    console.log(`[VideoRenderer] Starting full project video render for "${project.title}"...`);
+    const totalScenes = project.scenes.length;
+
+    try {
+      // 1. Render each scene clip
+      for (let i = 0; i < totalScenes; i++) {
+        if (onProgress) {
+          onProgress({ stage: 'scenes', current: i + 1, total: totalScenes, percent: Math.round(((i + 0.5) / totalScenes) * 80) });
+        }
+        console.log(`[VideoRenderer] Rendering Scene ${i + 1}/${totalScenes}...`);
+        const clipPath = await this.renderSceneClip(
+          project.scenes[i],
+          i,
+          project.title,
+          project.voice || 'en-US-ChristopherNeural'
+        );
+        sceneClips.push(clipPath);
+      }
+
+      if (onProgress) {
+        onProgress({ stage: 'joining', current: totalScenes, total: totalScenes, percent: 85 });
+      }
+
+      // 2. Concat all scene clips using concat demuxer file
+      const concatListPath = path.join(this.cacheDir, `concat_${timestamp}.txt`);
+      const fileLines = sceneClips.map(c => `file '${c.replace(/\\/g, '/')}'`).join('\n');
+      fs.writeFileSync(concatListPath, fileLines);
+
+      console.log('[VideoRenderer] Concatenating scene clips into final MP4...');
+      const concatArgs = [
+        '-y',
+        '-f', 'concat',
+        '-safe', '0',
+        '-i', concatListPath,
+        '-c', 'copy',
+        '-movflags', '+faststart',
+        finalOutputPath
+      ];
+
+      await this.runFFmpeg(concatArgs);
+
+      // Clean up temp scene clips
+      for (const clip of sceneClips) {
+        try { if (fs.existsSync(clip)) fs.unlinkSync(clip); } catch (e) {}
+      }
+      try { if (fs.existsSync(concatListPath)) fs.unlinkSync(concatListPath); } catch (e) {}
+
+      const size = fs.existsSync(finalOutputPath) ? fs.statSync(finalOutputPath).size : 0;
+      console.log(`[VideoRenderer] Video render complete! Output size: ${size} bytes`);
+
+      if (onProgress) {
+        onProgress({ stage: 'complete', percent: 100 });
+      }
+
+      return {
+        success: true,
+        filename: finalFilename,
+        downloadUrl: `/api/render/download/${finalFilename}`,
+        fileSize: size,
+        resolution: '720x1280 (9:16 Portrait)',
+        duration: project.totalDuration || 30
+      };
+    } catch (err) {
+      console.error('[VideoRenderer] Render failed:', err);
+      // Clean up on failure
+      for (const clip of sceneClips) {
+        try { if (fs.existsSync(clip)) fs.unlinkSync(clip); } catch (e) {}
+      }
+      throw err;
+    }
+  }
+
+  // Fallback transcode method
+  transcodeToMP4(inputPath, outputPath) {
+    return this.runFFmpeg([
+      '-y',
+      '-i', inputPath,
+      '-c:v', 'libx264',
+      '-preset', 'fast',
+      '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac',
+      '-b:a', '192k',
+      '-movflags', '+faststart',
+      outputPath
+    ]);
+  }
+}
+
+export const videoRenderer = new VideoRenderer();

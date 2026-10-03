@@ -1,0 +1,49 @@
+{
+  "source": "Curated by the Qoneqt Shots team",
+  "note": "Qoneqt does not expose a public trends API yet. Edit this file to change what appears under Trending on Qoneqt.",
+  "updatedAt": "2026-10-03T00:00:00.000Z",
+  "items": [
+    {
+      "id": "q1",
+      "hashtag": "#DayInTheLife",
+      "title": "Day-in-the-life Shots from students and first-jobbers",
+      "category": "Lifestyle",
+      "why": "Short, honest routines are the most shared format on the feed right now."
+    },
+    {
+      "id": "q2",
+      "hashtag": "#BuildInPublic",
+      "title": "Founders showing one real number a week",
+      "category": "Startups",
+      "why": "Transparent progress posts get saved and revisited."
+    },
+    {
+      "id": "q3",
+      "hashtag": "#LocalAI",
+      "title": "Running AI on your own laptop",
+      "category": "Tech",
+      "why": "Privacy and zero-cost tools are a growing conversation among creators."
+    },
+    {
+      "id": "q4",
+      "hashtag": "#30SecondRecipe",
+      "title": "One-pan recipes under 30 seconds",
+      "category": "Food",
+      "why": "Vertical, fast and easy to remake."
+    },
+    {
+      "id": "q5",
+      "hashtag": "#StudyWithMe",
+      "title": "Focus techniques that survive exam week",
+      "category": "Education",
+      "why": "Seasonal spike as exams approach."
+    },
+    {
+      "id": "q6",
+      "hashtag": "#CampusStories",
+      "title": "Hostel hacks and campus life",
+      "category": "Community",
+      "why": "Relatable, comment-heavy threads."
+    }
+  ]
+}
