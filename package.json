@@ -10,9 +10,9 @@
     "setup": "node scripts/setup.js",
     "doctor": "node scripts/doctor.js",
     "test:verify": "node scripts/verify-all.js",
-    "dev:server": "node server/index.js",
+    "dev:server": "node --watch server/index.js",
     "dev:client": "vite",
-    "dev": "concurrently \"node server/index.js\" \"vite\"",
+    "dev": "concurrently \"node --watch server/index.js\" \"vite\"",
     "build": "vite build"
   },
   "keywords": [

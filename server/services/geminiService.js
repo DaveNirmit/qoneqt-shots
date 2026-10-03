@@ -84,13 +84,29 @@ class GeminiService {
   // Try request variants in order (newer API shape first); return the first that works.
   async firstWorking(variants) {
     const errors = [];
+    let last = null;
     for (const fn of variants) {
       try { return await fn(); } catch (err) {
+        last = err;
         errors.push(err.message);
-        if (err.status === 401 || err.status === 403 || err.status === 429) break; // retrying another shape will not help
+        if ([401, 403, 429, 503].includes(err.status)) throw err; // another shape will not help
       }
     }
-    throw new Error(errors.join(' | '));
+    const e = new Error(errors.join(' | '));
+    e.status = last?.status;
+    throw e;
+  }
+
+  // Wait and try again when the free-tier quota or the service is briefly unavailable.
+  async withRetry(fn, { tries = 3, baseMs = 8000 } = {}) {
+    for (let i = 0; ; i++) {
+      try { return await fn(); } catch (err) {
+        const retriable = err.status === 429 || err.status === 503 || /quota|rate|overloaded|resource exhausted|unavailable/i.test(err.message);
+        if (!retriable || i >= tries - 1) throw err;
+        console.warn(`[Gemini] ${err.message}. Retrying in ${(baseMs * (i + 1)) / 1000}s`);
+        await sleep(baseMs * (i + 1));
+      }
+    }
   }
 
   /** Validates the key and reports which configured models it can see. */
@@ -118,7 +134,7 @@ class GeminiService {
 
   async generateJSON(prompt, schema) {
     const model = CONFIG.GEMINI.TEXT_MODEL;
-    const text = await this.firstWorking([
+    const text = await this.withRetry(() => this.firstWorking([
       async () => findText(await this.request('interactions', {
         method: 'POST',
         body: { model, input: prompt, response_format: { type: 'text', mime_type: 'application/json', schema } },
@@ -127,14 +143,14 @@ class GeminiService {
         method: 'POST',
         body: { contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { responseMimeType: 'application/json' } },
       })),
-    ]);
+    ]));
     return parseJSON(text);
   }
 
   /** Generates a 9:16 image and stores it in the image cache. */
   async generateImage(prompt, nameHint = 'scene') {
     const model = CONFIG.GEMINI.IMAGE_MODEL;
-    const img = await this.firstWorking([
+    const img = await this.withRetry(() => this.firstWorking([
       async () => findImage(await this.request('interactions', {
         method: 'POST', timeoutMs: 120000,
         body: {
@@ -150,7 +166,7 @@ class GeminiService {
           generationConfig: { responseModalities: ['IMAGE'], imageConfig: { aspectRatio: '9:16' } },
         },
       })) || Promise.reject(new Error('No image in generateContent response')),
-    ]);
+    ]));
     const ext = img.mime.includes('png') ? 'png' : 'jpg';
     const safe = String(nameHint).toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 40) || 'scene';
     const filename = `gem_${safe}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.${ext}`;

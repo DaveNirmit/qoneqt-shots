@@ -55,10 +55,10 @@ export function Empty({ icon: Icon, title, text, action }) {
 }
 
 /** A plain phone frame. Children render inside the 9:16 screen. */
-export function Phone({ children, className = '' }) {
+export function Phone({ children, className = '', aspect = 'aspect-[9/19]' }) {
   return (
     <div className={`relative rounded-[36px] bg-ink p-[7px] shadow-[0_30px_60px_-20px_rgba(22,20,15,.35)] ${className}`}>
-      <div className="relative w-full aspect-[9/19] rounded-[30px] overflow-hidden bg-[#0d0c0a]">
+      <div className={`relative w-full ${aspect} rounded-[30px] overflow-hidden bg-[#0d0c0a]`}>
         {children}
         <div className="absolute top-2 left-1/2 -translate-x-1/2 w-[72px] h-[20px] rounded-full bg-ink" />
       </div>

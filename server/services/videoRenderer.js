@@ -73,12 +73,41 @@ class VideoRenderer {
       }
     }
 
-    // Clean text for FFmpeg drawtext
-    const rawText = (scene.onScreenText || scene.text || 'SCENE HOOK')
+    const fontArg = fs.existsSync("C:/Windows/Fonts/segoeuib.ttf")
+      ? ":fontfile='C\\:/Windows/Fonts/segoeuib.ttf'"
+      : fs.existsSync("C:/Windows/Fonts/arialbd.ttf")
+      ? ":fontfile='C\\:/Windows/Fonts/arialbd.ttf'"
+      : "";
+
+    // Clean and wrap on-screen text. drawtext has no word-wrap, so each line becomes its own
+    // centred drawtext read from a temp file (expansion=none keeps %, :, ' and \ literal).
+    const rawText = (scene.onScreenText || scene.text || '')
       .replace(/\\n|[\r\n]+/g, ' ')
-      .replace(/%/g, ' percent')
-      .replace(/[:\\']/g, ' ')
+      .replace(/\s+/g, ' ')
       .trim();
+    const wrap = (text, max) => {
+      const out = [];
+      let cur = '';
+      for (const w of text.split(' ')) {
+        if (!cur) cur = w;
+        else if (`${cur} ${w}`.length <= max) cur += ` ${w}`;
+        else { out.push(cur); cur = w; }
+      }
+      if (cur) out.push(cur);
+      return out;
+    };
+    const lines = rawText ? wrap(rawText, 22).slice(0, 4) : [];
+    const fontSize = lines.length >= 3 ? 32 : 36;
+    const lineH = Math.round(fontSize * 1.5);
+    const blockTop = Math.round(1280 * 0.62 - ((lines.length - 1) * lineH) / 2);
+    const captionFiles = [];
+    const captionFilters = lines.map((line, li) => {
+      const file = path.join(this.cacheDir, `cap_${timestamp}_${sceneIdx}_${li}.txt`);
+      fs.writeFileSync(file, line, 'utf8');
+      captionFiles.push(file);
+      const ref = file.replace(/\\/g, '/').replace(/:/g, '\\:');
+      return `drawtext=textfile='${ref}':expansion=none${fontArg}:fontcolor=white:fontsize=${fontSize}:x=(w-text_w)/2:y=${blockTop + li * lineH}:borderw=4:bordercolor=black:shadowcolor=black@0.85:shadowx=2:shadowy=2:box=1:boxcolor=black@0.45:boxborderw=12`;
+    });
 
     // Ken Burns zoompan filter
     const zoomExpr = sceneIdx % 2 === 0
@@ -87,35 +116,17 @@ class VideoRenderer {
     const panX = sceneIdx % 2 === 0 ? "iw/2-(iw/zoom/2)" : "iw/4";
     const panY = "ih/2-(ih/zoom/2)";
 
-    const fontArg = fs.existsSync("C:/Windows/Fonts/segoeuib.ttf")
-      ? ":fontfile='C\\:/Windows/Fonts/segoeuib.ttf'"
-      : fs.existsSync("C:/Windows/Fonts/arialbd.ttf")
-      ? ":fontfile='C\\:/Windows/Fonts/arialbd.ttf'"
-      : "";
-
     const hasRealVideo = Boolean(
       scene.videoLocalPath &&
       fs.existsSync(scene.videoLocalPath) &&
       fs.statSync(scene.videoLocalPath).size > 10000
     );
 
-    let vf = [];
-    if (hasRealVideo) {
-      vf = [
-        "scale=720:1280:force_original_aspect_ratio=increase",
-        "crop=720:1280",
-        `drawtext=text='QONEQT SHOTS'${fontArg}:fontcolor=white@0.75:fontsize=15:x=(w-text_w)/2:y=65:shadowcolor=black@0.6:shadowx=1:shadowy=1`,
-        `drawtext=text='${rawText}'${fontArg}:fontcolor=white:fontsize=32:x=(w-text_w)/2:y=h*0.62:borderw=4:bordercolor=black:shadowcolor=black@0.85:shadowx=2:shadowy=2:box=1:boxcolor=black@0.45:boxborderw=10`
-      ].join(',');
-    } else {
-      vf = [
-        "scale=720:1280:force_original_aspect_ratio=increase",
-        "crop=720:1280",
-        `zoompan=z='${zoomExpr}':x='${panX}':y='${panY}':d=${frames}:s=720x1280:fps=30`,
-        `drawtext=text='QONEQT SHOTS'${fontArg}:fontcolor=white@0.75:fontsize=15:x=(w-text_w)/2:y=65:shadowcolor=black@0.6:shadowx=1:shadowy=1`,
-        `drawtext=text='${rawText}'${fontArg}:fontcolor=white:fontsize=32:x=(w-text_w)/2:y=h*0.62:borderw=4:bordercolor=black:shadowcolor=black@0.85:shadowx=2:shadowy=2:box=1:boxcolor=black@0.45:boxborderw=10`
-      ].join(',');
-    }
+    const brand = `drawtext=text='QONEQT SHOTS'${fontArg}:fontcolor=white@0.75:fontsize=15:x=(w-text_w)/2:y=65:shadowcolor=black@0.6:shadowx=1:shadowy=1`;
+    const vf = (hasRealVideo
+      ? ['scale=720:1280:force_original_aspect_ratio=increase', 'crop=720:1280']
+      : ['scale=720:1280:force_original_aspect_ratio=increase', 'crop=720:1280', `zoompan=z='${zoomExpr}':x='${panX}':y='${panY}':d=${frames}:s=720x1280:fps=30`]
+    ).concat(brand, captionFilters).join(',');
 
     const args = ['-y'];
 
@@ -150,7 +161,11 @@ class VideoRenderer {
       clipOut
     );
 
-    await this.runFFmpeg(args);
+    try {
+      await this.runFFmpeg(args);
+    } finally {
+      for (const f of captionFiles) { try { fs.unlinkSync(f); } catch (e) {} }
+    }
     return clipOut;
   }
 

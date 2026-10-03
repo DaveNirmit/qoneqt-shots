@@ -24,7 +24,7 @@ function Featured({ items, onUse }) {
             {t.retrievalTime && <span>· {timeAgo(t.retrievalTime)}</span>}
           </div>
           <h2 className="mt-5 text-[30px] md:text-[40px] leading-[1.08] max-w-3xl font-serif font-normal">{t.title}</h2>
-          {t.videoAngle && <p className="mt-4 text-white/70 max-w-2xl text-[15px]">Shot angle: {t.videoAngle}</p>}
+          {t.summary && <p className="mt-4 text-white/70 max-w-2xl text-[15px]">{t.summary}</p>}
           <div className="mt-auto pt-6 flex flex-wrap items-center gap-3">
             <button onClick={() => onUse(t)} className="btn btn-accent">Make a Shot <ArrowRight className="w-4 h-4" /></button>
             {t.sourceUrl && <a href={t.sourceUrl} target="_blank" rel="noreferrer" className="btn btn-ghost !text-white/80 hover:!text-white hover:!bg-white/10"><ExternalLink className="w-4 h-4" /> Read source</a>}
@@ -107,7 +107,7 @@ export default function TrendsPage({ onUse }) {
                     {t.retrievalTime && <span className="text-faint ml-auto">{timeAgo(t.retrievalTime)}</span>}
                   </div>
                   <h3 className="mt-3 text-[18px] leading-snug font-medium">{t.title}</h3>
-                  {t.videoAngle && <p className="mt-2 text-[13px] text-muted line-clamp-2">Angle: {t.videoAngle}</p>}
+                  {t.summary && <p className="mt-2 text-[13px] text-muted line-clamp-2">{t.summary}</p>}
                   <div className="mt-auto pt-4 flex items-center gap-2">
                     <button onClick={() => onUse(t)} className="btn btn-outline btn-sm">Make a Shot <ArrowRight className="w-3.5 h-3.5" /></button>
                     {t.sourceUrl && <a href={t.sourceUrl} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm"><ExternalLink className="w-3.5 h-3.5" /> Source</a>}

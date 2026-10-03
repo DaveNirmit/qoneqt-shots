@@ -4,8 +4,8 @@ import { Logo, Phone } from '../components/ui';
 
 const HERO_SHOTS = [
   { img: '/shots/creator_phone.jpg', text: 'Your phone is a studio' },
-  { img: '/shots/ai_laptop.jpg', text: 'The AI runs on your laptop' },
-  { img: '/shots/creator_mic.jpg', text: 'Post it to Qoneqt today' },
+  { img: '/shots/ai_robotics.jpg', text: 'AI writes the script for you' },
+  { img: '/shots/creator_condenser.jpg', text: 'Narrated, captioned, ready to post' },
 ];
 
 const FEED = [
@@ -225,9 +225,9 @@ export default function LandingPage({ onStart, onOpenStudio }) {
                 <div className="flex items-center gap-2 text-[12px]"><span className="text-muted">Idea</span><span className="text-faint">/</span><span className="font-medium">Script</span><span className="text-faint">/</span><span className="text-muted">Video</span></div>
                 <div className="mt-3 text-[20px] font-semibold">Why your battery hates winter</div>
                 <div className="mt-5 space-y-2.5">
-                  {[['ai_laptop', 'Cold slows the chemistry', 'Lithium ions move slower when it is cold, so your phone reads less charge.'],
-                    ['creator_phone', 'Your battery is not broken', 'Warm it back up and most of that charge comes back.'],
-                    ['creator_mic', 'Keep it in an inner pocket', 'Body heat is the cheapest battery upgrade you will ever get.']].map(([img, t, n]) => (
+                  {[['creator_phone', 'Cold slows the chemistry', 'Lithium ions move slower when it is cold, so your phone reads less charge.'],
+                    ['ai_robotics', 'Your battery is not broken', 'Warm it back up and most of that charge comes back.'],
+                    ['creator_condenser', 'Keep it in an inner pocket', 'Body heat is the cheapest battery upgrade you will ever get.']].map(([img, t, n]) => (
                     <div key={t} className="flex gap-3 border border-line rounded-xl p-3 bg-card">
                       <img src={`/shots/${img}.jpg`} alt="" className="w-11 h-[60px] rounded-md object-cover shrink-0" />
                       <div className="min-w-0"><div className="text-[13px] font-semibold">{t}</div><div className="text-[12px] text-muted mt-0.5 line-clamp-2">{n}</div></div>
@@ -237,7 +237,7 @@ export default function LandingPage({ onStart, onOpenStudio }) {
               </div>
               <div className="border-l border-line bg-paper p-6 hidden md:flex items-center justify-center">
                 <Phone className="w-[170px]">
-                  <img src="/shots/ai_laptop.jpg" alt="" className="absolute inset-0 w-full h-full object-cover" />
+                  <img src="/shots/creator_phone.jpg" alt="" className="absolute inset-0 w-full h-full object-cover" />
                   <div className="absolute inset-x-3 top-[58%] text-center"><Caption size="sm">Cold slows the chemistry</Caption></div>
                 </Phone>
               </div>

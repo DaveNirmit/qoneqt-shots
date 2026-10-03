@@ -6,10 +6,28 @@ import { CONFIG } from '../config.js';
 
 const router = express.Router();
 
+// Keep the Trends page safe to show on stage: drop stories whose title or summary contains profanity.
+const BLOCKED = ['ass', 'asses', 'asshole', 'bastard', 'bitch', 'bitches', 'bollocks', 'boobs', 'bullshit', 'cock', 'crap', 'cum', 'cunt',
+  'damn', 'dick', 'dildo', 'douche', 'fag', 'faggot', 'fuck', 'fucked', 'fucker', 'fucking', 'goddamn', 'handjob', 'horny', 'jizz', 'kike',
+  'milf', 'motherfucker', 'nigga', 'nigger', 'nude', 'nudes', 'orgasm', 'penis', 'piss', 'pissed', 'porn', 'porno', 'pussy', 'rape', 'rapist',
+  'retard', 'retarded', 'scrotum', 'sex', 'sexy', 'shit', 'shitty', 'slut', 'spic', 'tits', 'twat', 'vagina', 'wank', 'wanker', 'whore', 'xxx'];
+const BLOCKED_RE = new RegExp(`\\b(${BLOCKED.join('|')})\\b`, 'i');
+const isClean = (t) => !BLOCKED_RE.test(`${t.title || ''} ${t.summary || ''}`);
+// Mix the sources (Hacker News, BBC, GDELT) instead of listing one source first, so the page shows varied topics.
+const interleave = (items) => {
+  const groups = new Map();
+  items.forEach((t) => { const k = t.sourceId || t.sourceName; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(t); });
+  const lists = [...groups.values()];
+  const out = [];
+  for (let i = 0; lists.some((l) => i < l.length); i++) lists.forEach((l) => i < l.length && out.push(l[i]));
+  return out;
+};
+const familyFriendly = (data) => (data && Array.isArray(data.items) ? { ...data, items: interleave(data.items.filter(isClean)) } : data);
+
 router.get('/', async (req, res) => {
   try {
     const data = await trendService.getAllTrends(false);
-    res.json(data);
+    res.json(familyFriendly(data));
   } catch (err) {
     res.status(500).json({ error: err.message, items: trendService.getDemoItems() });
   }
@@ -18,7 +36,7 @@ router.get('/', async (req, res) => {
 router.post('/refresh', async (req, res) => {
   try {
     const data = await trendService.getAllTrends(true);
-    res.json(data);
+    res.json(familyFriendly(data));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

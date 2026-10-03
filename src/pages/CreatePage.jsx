@@ -138,6 +138,8 @@ export default function CreatePage({ draft, engine, voices, shots, onSaved, onNe
   const removeScene = useCallback((i) => setProject((p) => ({ ...p, scenes: p.scenes.filter((_, j) => j !== i) })), []);
   const titleRef = useRef('');
   titleRef.current = project?.title || topic;
+  const scenesRef = useRef([]);
+  scenesRef.current = project?.scenes || [];
 
   const persist = async (p) => {
     const res = await saveProject({ ...p, topic, voice, tone, totalDuration: totalSeconds(p.scenes) });
@@ -167,13 +169,13 @@ export default function CreatePage({ draft, engine, voices, shots, onSaved, onNe
   const generateScenes = async () => {
     setError(''); setBusy('scenes'); setProgress('Directing scenes...');
     try {
-      const res = await generateShotScenes({ brief: project, count, tone, voiceName, length: duration });
+      const res = await generateShotScenes({ brief: project, count, tone, voiceName, length: duration, seed: Date.now(), avoid: project.shotsGenerated ? (project.scenes || []).map((x) => x.onScreenText).filter(Boolean) : [] });
       let scenes = res.scenes.map((s) => ({ ...s, imageUrl: null, imageLocalPath: null }));
       setProject((p) => ({ ...p, scenes, shotsGenerated: true, shotsProvider: res.provider }));
       for (let i = 0; i < scenes.length; i++) {
         setProgress(`Creating image ${i + 1} of ${scenes.length}`);
         try {
-          const img = await generateShotImage({ prompt: scenes[i].visualDescription, text: scenes[i].onScreenText, topic: project.title, index: i });
+          const img = await generateShotImage({ prompt: scenes[i].visualDescription, text: scenes[i].onScreenText, narration: scenes[i].narration, topic: project.title, index: i, exclude: scenes.flatMap((x) => [x.imageLocalPath, x.imageUrl]).filter(Boolean) });
           scenes = scenes.map((s, j) => (j === i ? { ...s, imageUrl: img.url, imageLocalPath: img.localPath, imageProvider: img.provider } : s));
           setProject((p) => ({ ...p, scenes }));
         } catch { /* leave the slot empty; the renderer falls back to a stock frame */ }
@@ -189,7 +191,7 @@ export default function CreatePage({ draft, engine, voices, shots, onSaved, onNe
   const newImage = useCallback(async (i, s) => {
     setBusy(`img-${i}`);
     try {
-      const img = await generateShotImage({ prompt: s.visualDescription, text: s.onScreenText, topic: titleRef.current, index: i });
+      const img = await generateShotImage({ prompt: s.visualDescription, text: s.onScreenText, narration: s.narration, topic: titleRef.current, index: i, exclude: scenesRef.current.flatMap((x) => [x.imageLocalPath, x.imageUrl]).filter(Boolean) });
       updateScene(i, { imageUrl: img.url, imageLocalPath: img.localPath, imageProvider: img.provider });
     } catch { setError('A new image could not be made.'); }
     finally { setBusy(''); }
@@ -381,9 +383,9 @@ export default function CreatePage({ draft, engine, voices, shots, onSaved, onNe
       {/* 3. VIDEO */}
       {step === 'video' && project && (
         <div className="grid lg:grid-cols-[340px_1fr] gap-10 items-start">
-          <Phone className="w-[300px] mx-auto lg:mx-0">
+          <Phone className="w-[300px] mx-auto lg:mx-0" aspect="aspect-[9/16]">
             {videoUrl
-              ? <video key={videoUrl} src={videoUrl} controls playsInline className="absolute inset-0 w-full h-full object-cover bg-black" />
+              ? <video key={videoUrl} src={videoUrl} controls playsInline className="absolute inset-0 w-full h-full object-contain bg-black" />
               : <div className="absolute inset-0 grid place-items-center text-white/70 text-[13px]">{job?.status === 'FAILED' ? 'Render failed' : <span className="flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Rendering</span>}</div>}
           </Phone>
           <div>
