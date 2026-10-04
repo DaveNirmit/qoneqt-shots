@@ -7,35 +7,13 @@ import { CONFIG } from '../config.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Natural voices come from Microsoft's online speech service through the edge-tts Python package.
+const EDGE_PROVIDER = 'Microsoft natural voice via edge-tts (needs internet)';
 const NATURAL_NEURAL_VOICES = [
-  {
-    id: 'en-US-ChristopherNeural',
-    name: 'Christopher (Natural Male Creator)',
-    lang: 'en-US',
-    gender: 'Male',
-    provider: 'Microsoft Neural TTS (Human-Grade)'
-  },
-  {
-    id: 'en-US-JennyNeural',
-    name: 'Jenny (Natural Female Creator)',
-    lang: 'en-US',
-    gender: 'Female',
-    provider: 'Microsoft Neural TTS (Human-Grade)'
-  },
-  {
-    id: 'en-US-GuyNeural',
-    name: 'Guy (Natural Documentary Voice)',
-    lang: 'en-US',
-    gender: 'Male',
-    provider: 'Microsoft Neural TTS (Human-Grade)'
-  },
-  {
-    id: 'en-US-AriaNeural',
-    name: 'Aria (Natural Storyteller)',
-    lang: 'en-US',
-    gender: 'Female',
-    provider: 'Microsoft Neural TTS (Human-Grade)'
-  }
+  { id: 'en-US-ChristopherNeural', name: 'Christopher (natural, male)', lang: 'en-US', gender: 'Male', provider: EDGE_PROVIDER },
+  { id: 'en-US-JennyNeural', name: 'Jenny (natural, female)', lang: 'en-US', gender: 'Female', provider: EDGE_PROVIDER },
+  { id: 'en-US-GuyNeural', name: 'Guy (natural, male, documentary)', lang: 'en-US', gender: 'Male', provider: EDGE_PROVIDER },
+  { id: 'en-US-AriaNeural', name: 'Aria (natural, female, storyteller)', lang: 'en-US', gender: 'Female', provider: EDGE_PROVIDER },
 ];
 
 class TTSService {
@@ -44,15 +22,36 @@ class TTSService {
     if (!fs.existsSync(this.audioCacheDir)) {
       fs.mkdirSync(this.audioCacheDir, { recursive: true });
     }
-    this.installedVoices = [];
-    this.initialized = false;
+    this.voicesPromise = null;
+    this.pythonCmd = null; // the Python command that has edge-tts, or null when it is not installed
   }
 
-  async getAvailableVoices() {
-    if (this.initialized) return this.installedVoices;
+  // Natural voices are only offered when the edge-tts package is really installed on this computer.
+  async detectEdgeTTS() {
+    const candidates = process.platform === 'win32' ? ['python', 'py'] : ['python3', 'python'];
+    for (const cmd of candidates) {
+      const ok = await new Promise((resolve) => {
+        try {
+          const child = spawn(cmd, ['-m', 'edge_tts', '--version'], { stdio: 'ignore' });
+          const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch (e) {} resolve(false); }, 8000);
+          child.on('close', (code) => { clearTimeout(timer); resolve(code === 0); });
+          child.on('error', () => { clearTimeout(timer); resolve(false); });
+        } catch (e) { resolve(false); }
+      });
+      if (ok) return cmd;
+    }
+    return null;
+  }
 
-    // Start with natural neural voices
-    const voices = [...NATURAL_NEURAL_VOICES];
+  getAvailableVoices() {
+    if (!this.voicesPromise) this.voicesPromise = this.scanVoices();
+    return this.voicesPromise;
+  }
+
+  async scanVoices() {
+    this.pythonCmd = await this.detectEdgeTTS();
+    const voices = this.pythonCmd ? [...NATURAL_NEURAL_VOICES] : [];
+    if (!this.pythonCmd) console.log('[TTSService] edge-tts not installed: offering offline voices only (python -m pip install edge-tts for natural voices)');
 
     // Query native Windows SAPI voices as local fallback
     if (process.platform === 'win32') {
@@ -77,10 +76,10 @@ $synth.Dispose()
             if (v && v.Name && !voices.some(existing => existing.id === v.Name)) {
               voices.push({
                 id: v.Name,
-                name: `${v.Name} (Windows SAPI Local)`,
+                name: `${String(v.Name).replace(/^Microsoft\s+/, '').replace(/\s+Desktop$/, '')} (Windows, offline)`,
                 lang: v.Culture || 'en-US',
                 gender: v.Gender,
-                provider: 'Windows System.Speech (Offline)'
+                provider: 'Windows built-in voice (offline)'
               });
             }
           }
@@ -90,28 +89,26 @@ $synth.Dispose()
       }
     }
 
-    // Caption-First option
     voices.push({
       id: 'none',
-      name: 'Caption-First (No Spoken Audio)',
+      name: 'No narration (captions only)',
       lang: 'any',
       gender: 'Neutral',
-      provider: 'Visual & Kinetic Captions Only'
+      provider: 'Captions only'
     });
-
-    this.installedVoices = voices;
-    this.initialized = true;
     return voices;
   }
 
-  runPowerShell(script) {
+  // Values reach the script through environment variables, never by pasting them into the code,
+  // so narration text cannot be interpreted as PowerShell.
+  runPowerShell(script, timeoutMs = 3500, env = {}) {
     return new Promise((resolve) => {
       try {
-        const ps = spawn('powershell', ['-NoProfile', '-Command', script]);
+        const ps = spawn('powershell', ['-NoProfile', '-Command', script], { env: { ...process.env, ...env } });
         const timer = setTimeout(() => {
           try { ps.kill('SIGKILL'); } catch (e) {}
           resolve(null);
-        }, 3500);
+        }, timeoutMs);
 
         let stdout = '';
         ps.stdout?.on('data', d => { stdout += d.toString(); });
@@ -133,17 +130,19 @@ $synth.Dispose()
     return new Promise((resolve) => {
       let timer = null;
       try {
-        const child = spawn('python', [
+        const child = spawn(this.pythonCmd || 'python', [
           '-m', 'edge_tts',
           '--voice', voice,
           '--text', text,
           '--write-media', outputPath
         ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
+        // Python start-up plus the network round trip can take several seconds per line.
         timer = setTimeout(() => {
           try { child.kill('SIGKILL'); } catch (e) {}
+          try { fs.unlinkSync(outputPath); } catch (e) {}
           resolve(false);
-        }, 3500);
+        }, 25000);
 
         let stderr = '';
         child.stderr?.on('data', d => { stderr += d.toString(); });
@@ -177,8 +176,9 @@ $synth.Dispose()
     const filename = outputFilename || `tts_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${ext}`;
     const outputPath = path.join(this.audioCacheDir, filename);
 
-    // 1. Try High-Quality Natural Neural TTS first
-    if (isNeural) {
+    // 1. Natural voice first, when edge-tts is installed
+    await this.getAvailableVoices();
+    if (isNeural && this.pythonCmd) {
       try {
         console.log(`[TTSService] Generating natural neural voice (${voiceName})...`);
         const ok = await this.runEdgeTTS(voiceName, text, outputPath);
@@ -199,21 +199,19 @@ $synth.Dispose()
     // 2. Fallback to Windows SAPI System.Speech
     if (process.platform === 'win32') {
       const fallbackWav = outputPath.replace(/\.mp3$/, '.wav');
-      const sanitizedText = text.replace(/[`"$]/g, '\\$&');
-      const sanitizedPath = fallbackWav.replace(/\\/g, '\\\\');
       const sapiVoice = isNeural ? 'Microsoft David Desktop' : voiceName;
 
       const psScript = `
 Add-Type -AssemblyName System.Speech
 $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
-if ("${sapiVoice}") {
-  try { $synth.SelectVoice("${sapiVoice}") } catch {}
+if ($env:QS_VOICE) {
+  try { $synth.SelectVoice($env:QS_VOICE) } catch {}
 }
-$synth.SetOutputToWaveFile("${sanitizedPath}")
-$synth.Speak("${sanitizedText}")
+$synth.SetOutputToWaveFile($env:QS_OUT)
+$synth.Speak($env:QS_TEXT)
 $synth.Dispose()
 `;
-      await this.runPowerShell(psScript);
+      await this.runPowerShell(psScript, 30000, { QS_TEXT: text, QS_VOICE: sapiVoice, QS_OUT: fallbackWav });
 
       if (fs.existsSync(fallbackWav) && fs.statSync(fallbackWav).size > 1000) {
         const wavFilename = path.basename(fallbackWav);

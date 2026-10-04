@@ -14,13 +14,14 @@ export function ProjectThumb({ src, className = '' }) {
 function readiness(doctor, shots) {
   const ai = doctor?.aiRuntime || {};
   const cloud = {
-    icon: Sparkles, name: 'Scene and image AI (Gemini)',
+    icon: Sparkles, name: 'Scene AI (Gemini)',
     tone: !shots ? 'idle' : shots.valid ? 'ok' : shots.configured ? 'bad' : 'warn',
-    value: !shots ? 'Checking...' : shots.valid ? `Scenes: ${shots.models?.text || 'Gemini'}. Images: ${shots.imageBlocked ? 'Pollinations (free)' : 'Gemini, or Pollinations if refused'}`
-      : shots.configured ? 'Key rejected. Check GEMINI_API_KEY in .env' : 'No key. Scenes use the local AI and stock images',
+    value: !shots ? 'Checking...' : shots.valid ? `${shots.models?.text || 'Gemini'}. Images by Pollinations (free)`
+      : shots.configured ? 'Key rejected. Check GEMINI_API_KEY in .env' : 'No key. Scenes use the local AI',
   };
   const voices = doctor?.speech?.voices || [];
   const offline = voices.filter((v) => /Windows/i.test(v.provider || '')).length;
+  const natural = voices.filter((v) => /edge-tts/i.test(v.provider || '')).length;
   const ff = doctor?.videoRenderer || {};
   return [
     {
@@ -31,8 +32,11 @@ function readiness(doctor, shots) {
     },
     {
       icon: Mic, name: 'Narration',
-      tone: !doctor ? 'idle' : offline > 0 ? 'ok' : 'warn',
-      value: !doctor ? 'Checking...' : `Neural voices (online)${offline ? ` + ${offline} offline Windows voice${offline > 1 ? 's' : ''}` : ''}`,
+      tone: !doctor ? 'idle' : natural ? 'ok' : offline ? 'warn' : 'bad',
+      value: !doctor ? 'Checking...'
+        : natural ? `${natural} natural voices${offline ? `, ${offline} offline backup` : ''}`
+        : offline ? 'Windows voices only. Run python -m pip install edge-tts for natural voices'
+        : 'No voices found. Videos will have captions only',
     },
     {
       icon: Clapperboard, name: 'Video renderer',

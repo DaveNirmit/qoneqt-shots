@@ -80,7 +80,7 @@ export default function SystemPage({ doctor, shots, onRefresh, onRefreshShots })
           )}
         </Section>
 
-        <Section icon={Sparkles} title="Scene and image AI (Gemini)"
+        <Section icon={Sparkles} title="Scene AI (Gemini)"
           status={<Badge tone={!shots ? 'neutral' : shots.valid ? 'ok' : shots.configured ? 'bad' : 'warn'}>
             <Dot tone={!shots ? 'idle' : shots.valid ? 'ok' : shots.configured ? 'bad' : 'warn'} /> {!shots ? 'Checking' : shots.valid ? 'Connected' : shots.configured ? 'Key rejected' : 'No key'}
           </Badge>}>
@@ -104,9 +104,11 @@ export default function SystemPage({ doctor, shots, onRefresh, onRefreshShots })
 
         <Section icon={Mic} title="Narration voices" status={<Badge>{voices.length} available</Badge>}>
           <div className="max-h-[220px] overflow-auto -mx-1 px-1">
-            {voices.map((v) => <Row key={v.id} k={v.name} v={/Windows/i.test(v.provider || '') ? 'offline' : 'online'} />)}
+            {voices.map((v) => <Row key={v.id} k={v.name} v={/Windows/i.test(v.provider || '') ? 'offline' : 'needs internet'} />)}
           </div>
-          <p className="mt-3 text-[12px] text-faint">Neural voices need internet (edge-tts). If they are unavailable, Windows voices are used offline.</p>
+          {voices.some((v) => /edge-tts/i.test(v.provider || ''))
+            ? <p className="mt-3 text-[12px] text-faint">Natural voices need internet. If a line cannot be generated online, the offline Windows voice reads it instead.</p>
+            : <p className="mt-3 text-[13px] text-muted">Natural voices are not installed. Run <code className="font-mono text-ink">python -m pip install edge-tts</code>, then restart the app.</p>}
         </Section>
 
         <Section icon={Monitor} title="This computer">

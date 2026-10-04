@@ -107,6 +107,10 @@ export default function CreatePage({ draft, engine, voices, shots, onSaved, onNe
   const [duration, setDuration] = useState(30);
   const [tone, setTone] = useState('Informative');
   const [voice, setVoice] = useState('en-US-ChristopherNeural');
+  // Never preselect a voice this computer cannot produce: fall back to the first one it offers.
+  useEffect(() => {
+    if (voices.length && !voices.some((v) => v.id === voice)) setVoice(voices[0].id);
+  }, [voices, voice]);
   const [trend] = useState(draft.trend || null);
   const [project, setProject] = useState(null);
   const [count, setCount] = useState(3);
@@ -249,7 +253,7 @@ export default function CreatePage({ draft, engine, voices, shots, onSaved, onNe
   };
 
   const videoUrl = project?.exportUrl || (job?.status === 'READY' ? job.finalVideoUrl : null);
-  const generated = Boolean(project?.shotsGenerated);
+  const generated = project?.shotsGenerated ?? Boolean(project?.scenes?.some((s) => s.imageUrl));
   const cloud = Boolean(shots?.valid);
 
   return (
@@ -296,7 +300,7 @@ export default function CreatePage({ draft, engine, voices, shots, onSaved, onNe
             <div className="mt-6">
               <label className="label" htmlFor="voice">Narration voice</label>
               <select id="voice" className="input" value={voice} onChange={(e) => setVoice(e.target.value)}>
-                {(voices.length ? voices : [{ id: 'en-US-ChristopherNeural', name: 'Christopher' }]).map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+                {voices.length ? voices.map((v) => <option key={v.id} value={v.id}>{v.name}</option>) : <option value={voice}>Loading voices...</option>}
               </select>
             </div>
             <div className="mt-8 flex items-center justify-end gap-3">

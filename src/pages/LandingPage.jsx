@@ -16,10 +16,11 @@ const FEED = [
 ];
 
 const STACK = [
-  ['Script', 'Qwen 2.5 (1.5B) through Ollama. Runs on an ordinary laptop CPU, about a 1 GB download.'],
-  ['Voice', 'Microsoft neural voices through edge-tts, with offline Windows voices as a fallback.'],
-  ['Visuals', 'Images from open sources such as Wikimedia Commons, with bundled local fallbacks.'],
-  ['Render', 'FFmpeg, bundled with the app. H.264 MP4 at 720 x 1280, ready for a 9:16 feed.'],
+  ['Brief', 'Qwen 2.5 (1.5B) through Ollama, on your own computer. About a 1 GB download, runs on an ordinary laptop CPU.'],
+  ['Scenes', 'Google Gemini (free tier) writes each scene. Without a key, the local model does it.'],
+  ['Visuals', 'Pollinations (free) paints each scene image from its description. Wikimedia Commons photos as a fallback.'],
+  ['Voice', 'Natural Microsoft voices through edge-tts (needs internet), with the built-in Windows voices offline.'],
+  ['Render', 'FFmpeg, bundled with the app, on your computer. H.264 MP4 at 720 x 1280 for a 9:16 feed.'],
 ];
 
 function useReveal() {
@@ -102,7 +103,7 @@ export default function LandingPage({ onStart, onOpenStudio }) {
               Make a Shot <ArrowRight className="w-4 h-4" />
             </button>
           </form>
-          <p className="mt-3 text-[13px] text-faint">No account. No API key. The script is written on your machine.</p>
+          <p className="mt-3 text-[13px] text-faint">Free to run. Your idea is shaped by an AI on your own laptop.</p>
         </div>
 
         <div className="flex justify-center lg:justify-end">
@@ -120,7 +121,7 @@ export default function LandingPage({ onStart, onOpenStudio }) {
             </div>
             <div className="absolute left-4 bottom-6 right-14 text-white">
               <div className="text-[12px] font-semibold">@you</div>
-              <div className="text-[11px] text-white/80 mt-0.5">Made in about a minute with Qoneqt Shots</div>
+              <div className="text-[11px] text-white/80 mt-0.5">Made with Qoneqt Shots</div>
             </div>
           </Phone>
         </div>
@@ -146,14 +147,14 @@ export default function LandingPage({ onStart, onOpenStudio }) {
               </div>
             ))}
           </div>
-          <p className="reveal mt-6 text-[13px] text-faint">Example frames rendered by Qoneqt Shots.</p>
+          <p className="reveal mt-6 text-[13px] text-faint">Illustrations of the Shot format.</p>
         </div>
       </section>
 
       {/* 02 How it works */}
       <section id="how" className="border-t border-line py-24 bg-card">
         <div className="max-w-[1180px] mx-auto px-6">
-          <SectionHead index="02 / How it works" title="Three steps. About a minute." />
+          <SectionHead index="02 / How it works" title="Three steps. A few minutes." />
           <div className="mt-14 grid md:grid-cols-3 gap-6">
             {/* Step 1 */}
             <div className="reveal">
@@ -249,9 +250,9 @@ export default function LandingPage({ onStart, onOpenStudio }) {
       {/* 04 Stack */}
       <section id="stack" className="border-t border-line py-24 bg-card">
         <div className="max-w-[1180px] mx-auto px-6">
-          <SectionHead index="04 / Under the hood" title="Local where it counts."
-            text="The thinking happens on your computer. Nothing is billed, and no key is needed. Here is exactly what runs where." />
-          <div className="mt-14 grid sm:grid-cols-2 lg:grid-cols-4 border-t border-line">
+          <SectionHead index="04 / Under the hood" title="Free to run, honest about it."
+            text="The thinking happens on your computer. Every service it uses is free. Here is exactly what runs on your computer and what goes online." />
+          <div className="mt-14 grid sm:grid-cols-2 lg:grid-cols-5 border-t border-line">
             {STACK.map(([k, v], i) => (
               <div key={k} className={`reveal pt-6 pb-2 pr-6 ${i ? 'lg:border-l lg:pl-6' : ''} border-line`} style={{ transitionDelay: `${i * 80}ms` }}>
                 <div className="eyebrow">{k}</div>

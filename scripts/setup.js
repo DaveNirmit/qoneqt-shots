@@ -68,7 +68,7 @@ async function setup() {
     console.log(`      Model not found locally.`);
     console.log(`      Downloading: ${modelMeta.name}`);
     console.log(`      Download Size: ${modelMeta.size} | License: ${modelMeta.license}`);
-    console.log(`      All data stays on your machine. No cloud calls.`);
+    console.log(`      After this one download, the model runs on your machine.`);
 
     let lastP = -1;
     await ollamaService.pullModel(CONFIG.DEFAULT_MODEL, (chunk) => {
