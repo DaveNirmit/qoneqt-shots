@@ -95,7 +95,8 @@ Writing rules:
 - Facts: only state things that are true. No invented statistics, studies or quotes, and no percentages or "rules" presented as fact unless they are well-established common knowledge. If you are not sure of a number, describe it without one.
 - Call to action: ask viewers to follow or comment on Qoneqt. Never say "subscribe", "like this video" or "smash the button".
 - onScreenText: a 3 to 7 word headline shown at the top of the screen for the whole scene (the narration itself is shown as subtitles). Sum up the scene; do not copy the narration's first words. No hashtags or emoji.
-- imagePrompt: a detailed photographic description of one vertical frame showing exactly what this scene's narration talks about: subject, setting, lighting, camera angle. Each scene shows a different subject or setting. No text, letters, logos or watermarks.
+- imagePrompt: a detailed photographic description of one vertical frame showing the concrete thing this scene's narration talks about (the object, person or place named in the narration, not a mood). Subject, setting, lighting, camera angle. Each scene shows a different subject or setting. No text, letters, logos or watermarks.
+- The narration of each scene must be understandable on its own and must describe or explain what is in its picture, so the words and the image always agree.
 - motionPrompt: camera movement and subject action for a short clip of that frame.
 - searchQuery: 2 to 4 plain words to find a real photo of this scene's subject in a photo library (for example "sleeping cat sofa").
 - Every scene makes a different point. Never repeat a sentence, phrase or image idea.
@@ -223,7 +224,7 @@ async function pollinationsImage(prompt, nameHint, seed) {
   const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt.slice(0, 600))}?width=720&height=1360&seed=${seed}&nologo=true&private=true&model=flux`;
   const headers = { 'User-Agent': 'QoneqtShots/1.0', ...(token ? { Authorization: `Bearer ${token}` } : {}) };
 
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 2; attempt++) {
     const wait = nextPollinationsAt - Date.now();
     if (wait > 0) await new Promise((r) => setTimeout(r, wait));
     const ctrl = new AbortController();
@@ -233,7 +234,7 @@ async function pollinationsImage(prompt, nameHint, seed) {
       const r = await fetch(url, { signal: ctrl.signal, headers });
       if (r.status === 402 || r.status === 429) {
         nextPollinationsAt = Date.now() + gapMs * (attempt + 1); // back off harder each time
-        console.warn(`[Shots] Pollinations busy (HTTP ${r.status}); retry ${attempt + 1}/3 in ${Math.round((nextPollinationsAt - Date.now()) / 1000)}s`);
+        console.warn(`[Shots] Pollinations busy (HTTP ${r.status}); retry ${attempt + 1}/2 in ${Math.round((nextPollinationsAt - Date.now()) / 1000)}s`);
         continue;
       }
       if (!r.ok || !String(r.headers.get('content-type') || '').startsWith('image/')) {
@@ -364,6 +365,12 @@ router.post('/image', async (req, res) => {
     const made = await pollinationsImage(full, topic, seed);
     if (!made) break; // the generator is unavailable right now; use real photos instead
     if (!isUsed(made.localPath)) return res.json(made);
+  }
+
+  // The painter is unavailable: a matching real photo beats a generic stock frame.
+  if (mode !== 'photo') {
+    const photo = await openversePhoto(query || text || topic, usedHashes, topic, index);
+    if (photo) return res.json(photo);
   }
 
   // Last resort: real photos from Wikimedia Commons, skipping any already used in this project.

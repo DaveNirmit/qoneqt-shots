@@ -1,4 +1,5 @@
 import { ollamaService } from './ollamaService.js';
+import { geminiService } from './geminiService.js';
 import { CONFIG } from '../config.js';
 
 // Clean JSON text if wrapped in markdown code fence or has trailing commas
@@ -155,6 +156,16 @@ export function getTemplateFallback(topic, options = {}) {
   };
 }
 
+const BRIEF_SCHEMA = {
+  type: 'object',
+  properties: {
+    title: { type: 'string' }, concept: { type: 'string' }, audience: { type: 'string' }, creatorNotes: { type: 'string' },
+    hook: { type: 'string' }, keyPoints: { type: 'array', items: { type: 'string' } }, cta: { type: 'string' },
+    caption: { type: 'string' }, hashtags: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['title', 'concept', 'hook', 'keyPoints', 'cta', 'caption', 'hashtags'],
+};
+
 const BRIEF_EXAMPLE = `{"title":"Why Your Phone Dies in the Cold","concept":"Cold weather slows the chemistry inside a phone battery, so it reports less charge, and keeping it warm fixes most of it.","audience":"Everyday phone users","creatorNotes":"Keep it simple and practical.","hook":"Ever had your phone die at 30 percent on a cold day?","keyPoints":["Phones run on lithium-ion batteries that work through chemical reactions.","Cold slows those reactions, so the battery cannot deliver power as easily.","The phone reads that as a low charge and can shut down early to protect itself.","Most of the charge comes back once the phone warms up again.","Keep it in an inside pocket and avoid charging it while it is freezing."],"cta":"Follow for more everyday tech explained in under a minute.","caption":"Your battery is not broken, it is just cold. Here is what happens inside and the easy fix. Has this happened to you?","hashtags":["#PhoneTips","#TechExplained","#WinterHacks","#Battery","#LifeHacks"]}`;
 
 class ScriptGenerator {
@@ -169,30 +180,19 @@ class ScriptGenerator {
     modelName = CONFIG.DEFAULT_MODEL
   }) {
     const fallback = () => getTemplateFallback(topic, { tone, duration, sourceName: sourceContext?.name, sourceUrl: sourceContext?.url });
-
-    const status = await ollamaService.checkStatus();
-    if (!status.online) {
-      console.warn('Ollama runtime is offline. Using the outline fallback.');
-      return fallback();
-    }
-    if (!(await ollamaService.isModelInstalled(modelName))) {
-      console.warn(`Model ${modelName} is not installed locally. Using the outline fallback.`);
-      return fallback();
-    }
-
     const pointCount = duration <= 20 ? 3 : duration <= 45 ? 4 : 5;
     const source = sourceContext?.title
       ? `\nThe idea comes from this real news story. Stay faithful to it and do not add facts it does not support:\n- Headline: ${sourceContext.title}\n- Source: ${sourceContext.name || 'news'}\n- Snippet: ${sourceContext.snippet || ''}\n`
       : '';
 
     const systemPrompt = `You are a script editor for short vertical videos on Qoneqt, a social media platform.
-A creator typed a rough idea, possibly with typos or extra instructions. Understand what they really want and turn it into a clear, accurate brief.
+A creator typed a rough idea, possibly with typos, slang or extra instructions. Work out what they really mean (for example "collage" usually means college) and turn it into a clear, accurate brief.
 Rules:
 - Stay on the creator's exact subject. Do not drift to artificial intelligence, technology or content creation unless the creator asked about that.
 - creatorNotes: any style wishes the creator wrote (for example "make it funny", "for students"). Empty if none.
 - keyPoints: ${pointCount} short, specific, true statements a viewer will learn, in a logical order (what it is or the problem, why it happens, what to do). Plain words. Never invent numbers, studies or quotes.
 - hook: one spoken sentence of at most 14 words that makes a viewer stop scrolling: a question or a surprising true fact.
-- cta: one short spoken sentence asking viewers to follow, comment or try it.
+- cta: one short spoken sentence asking viewers to follow or comment on Qoneqt.
 - caption: 2 or 3 sentences for the post, ending with a question for the comments.
 - hashtags: 5 relevant hashtags with no spaces.
 - Tone: ${tone}. Audience: ${audience}. Language: ${language}.
@@ -205,6 +205,36 @@ Now the real one.
 Creator's idea: "${topic}"
 Video length: about ${duration} seconds.${source}
 Write the JSON brief for this idea.`;
+
+    const finish = (validated, generator) => {
+      validated.generator = generator;
+      if (sourceContext?.url) validated.sourceAttribution = { name: sourceContext.name || 'Source', url: sourceContext.url };
+      return validated;
+    };
+
+    // 1. Gemini writes the brief when a key is set: it understands rough input far better than a 1.5B local model.
+    if (geminiService.isConfigured()) {
+      try {
+        console.log('[ScriptGenerator] Asking Gemini for the brief...');
+        const data = await geminiService.generateJSON(`${systemPrompt}\n\n${basePrompt}`, BRIEF_SCHEMA);
+        const validated = validateScriptSchema(data);
+        if (!isOnTopic(validated, topic)) throw new Error(`brief drifted off topic ("${validated.title}")`);
+        return finish(validated, `gemini:${geminiService.lastTextModel || 'gemini'}`);
+      } catch (err) {
+        console.warn('[ScriptGenerator] Gemini brief failed, using the local model:', err.message);
+      }
+    }
+
+    // 2. Local model (Ollama), fully offline.
+    const status = await ollamaService.checkStatus();
+    if (!status.online) {
+      console.warn('Ollama runtime is offline. Using the outline fallback.');
+      return fallback();
+    }
+    if (!(await ollamaService.isModelInstalled(modelName))) {
+      console.warn(`Model ${modelName} is not installed locally. Using the outline fallback.`);
+      return fallback();
+    }
 
     let lastError = null;
     let userPrompt = basePrompt;
@@ -221,8 +251,7 @@ Write the JSON brief for this idea.`;
         if (!isOnTopic(validated, topic)) {
           throw new Error(`Brief drifted off topic ("${validated.title}")`);
         }
-        if (sourceContext?.url) validated.sourceAttribution = { name: sourceContext.name || 'Source', url: sourceContext.url };
-        return validated;
+        return finish(validated, 'local-ollama');
       } catch (err) {
         console.warn(`[ScriptGenerator] Attempt ${attempt} failed:`, err.message);
         lastError = err;

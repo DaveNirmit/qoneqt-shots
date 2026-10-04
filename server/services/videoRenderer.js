@@ -68,16 +68,9 @@ class VideoRenderer {
     const timestamp = Date.now();
     const clipOut = path.join(this.cacheDir, `scene_clip_${sceneIdx}_${timestamp}.mp4`);
 
-    // 1. Get or generate visual image
-    let imgPath = scene.imageLocalPath;
-    if (!imgPath || !fs.existsSync(imgPath)) {
-      const visual = await visualService.getSceneVisual(
-        scene.onScreenText || scene.visualDescription,
-        projectTitle,
-        sceneIdx
-      );
-      imgPath = visual.localPath;
-    }
+    // 1. The scene's own picture. Without one, a plain dark frame with the text is used:
+    //    an unrelated stock photo would be worse than no photo.
+    let imgPath = scene.imageLocalPath && fs.existsSync(scene.imageLocalPath) ? scene.imageLocalPath : null;
 
     // 2. Synthesize audio
     let audioPath = null;
@@ -180,7 +173,7 @@ class VideoRenderer {
     const vf = (hasRealVideo
       ? ['scale=720:1280:force_original_aspect_ratio=increase', 'crop=720:1280']
       : ['scale=720:1280:force_original_aspect_ratio=increase', 'crop=720:1280', `zoompan=z='${zoomExpr}':x='${panX}':y='${panY}':d=${frames}:s=720x1280:fps=30`]
-    ).concat(brand, captionFilters).join(',');
+    ).concat('setsar=1', brand, captionFilters).join(','); // square pixels, so players show a true 9:16 frame
 
     const args = ['-y'];
 

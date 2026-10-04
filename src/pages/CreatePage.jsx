@@ -124,7 +124,6 @@ export default function CreatePage({ draft, engine, voices, shots, onSaved, onNe
   const [copied, setCopied] = useState(false);
   const pollRef = useRef(null);
   const genRef = useRef(0); // bumps on every new scene generation, render or unmount to stop background image work
-  const [aiNote, setAiNote] = useState('');
 
   useEffect(() => {
     if (!draft.projectId) return;
@@ -176,32 +175,6 @@ export default function CreatePage({ draft, engine, voices, shots, onSaved, onNe
     } finally { setBusy(''); }
   };
 
-  // Paint AI versions of the scene images one by one, replacing the quick photos. Stops if anything newer starts.
-  const upgradeToAI = async (gen, startScenes) => {
-    let replaced = 0;
-    for (let i = 0; i < startScenes.length; i++) {
-      if (genRef.current !== gen) return;
-      setAiNote(`Painting AI images ${i + 1} of ${startScenes.length}. You can render any time.`);
-      const s = startScenes[i];
-      try {
-        const img = await generateShotImage({
-          mode: 'ai', prompt: s.visualDescription, text: s.onScreenText, narration: s.narration, topic: titleRef.current, index: i,
-          exclude: scenesRef.current.map((x) => x.imageLocalPath).filter(Boolean),
-        });
-        if (genRef.current !== gen) return;
-        if (img.provider !== 'pollinations' && img.provider !== 'gemini') continue; // AI unavailable: keep the photo
-        replaced++;
-        setProject((p) => {
-          if (!p?.scenes?.[i] || p.scenes[i].imageLocalPath !== s.imageLocalPath) return p; // changed by the user meanwhile
-          return { ...p, scenes: p.scenes.map((x, j) => (j === i ? { ...x, imageUrl: img.url, imageLocalPath: img.localPath, imageProvider: img.provider, imageCredit: '' } : x)) };
-        });
-      } catch { /* keep the photo */ }
-    }
-    if (genRef.current !== gen) return;
-    setAiNote('');
-    if (replaced) setTimeout(() => { if (genRef.current === gen && projectRef.current) persist(projectRef.current).catch(() => {}); }, 300);
-  };
-
   const photoFor = (s, i, exclude = []) => generateShotImage({
     mode: 'photo', query: s.searchQuery, prompt: s.visualDescription, text: s.onScreenText, topic: titleRef.current, index: i, exclude,
   }).catch(() => null);
@@ -210,7 +183,6 @@ export default function CreatePage({ draft, engine, voices, shots, onSaved, onNe
   // Step 2: Gemini (or the local model) writes N scenes; matching photos appear at once, AI images follow.
   const generateScenes = async () => {
     const gen = ++genRef.current;
-    setAiNote('');
     setError(''); setBusy('scenes'); setProgress('Writing scenes...');
     try {
       const res = await generateShotScenes({ brief: project, count, tone, voiceName, length: duration, seed: Date.now(), avoid: project.shotsGenerated ? (project.scenes || []).map((x) => x.onScreenText).filter(Boolean) : [] });
@@ -233,7 +205,6 @@ export default function CreatePage({ draft, engine, voices, shots, onSaved, onNe
       if (genRef.current !== gen) return;
       setProject(saved);
       setJob(null);
-      upgradeToAI(gen, saved.scenes);
     } catch (e) {
       setError(e.message || 'Scenes could not be generated.');
     } finally { setBusy(''); setProgress(''); }
@@ -256,8 +227,7 @@ export default function CreatePage({ draft, engine, voices, shots, onSaved, onNe
   const render = async () => {
     const empty = project.scenes.findIndex((s) => !(s.onScreenText || '').trim() && !(s.narration || '').trim());
     if (empty >= 0) return setError(`Scene ${empty + 1} is empty. Add text or remove it.`);
-    genRef.current++; // stop background image work: the video uses the images as they are now
-    setAiNote('');
+    genRef.current++; // anything still generating belongs to an older run
     setError(''); setBusy('render');
     try {
       const saved = await persist({ ...project, exportUrl: null, status: 'rendering' });
@@ -366,7 +336,7 @@ export default function CreatePage({ draft, engine, voices, shots, onSaved, onNe
           <aside className="card p-5 text-[13px]">
             <div className="eyebrow">How a Shot is made</div>
             <ol className="mt-4 space-y-4">
-              {[['Brief', engine.mode === 'ai' ? `${engine.detail} on this computer turns your words into a hook, key points and a caption.` : 'The local AI is offline, so a template brief is used. Start Ollama in System for real AI.'],
+              {[['Brief', cloud ? 'Gemini reads your words, fixes typos and turns them into a hook, key points and a caption.' : engine.mode === 'ai' ? `${engine.detail} on this computer turns your words into a hook, key points and a caption.` : 'The local AI is offline, so a template brief is used. Start Ollama in System for real AI.'],
                 ['Scenes', cloud ? 'Gemini directs each scene; a free image generator paints each one, which can take a while per image.' : 'Add a Gemini key in System to direct scenes with AI. Images come from a free generator.'],
                 ['Video', cloud && shots?.videoEnabled ? 'Veo animates each scene; narration and captions are added locally.' : 'Scenes get motion, narration and captions locally with FFmpeg.']].map(([t, d], i) => (
                 <li key={t} className="flex gap-3">
@@ -406,7 +376,7 @@ export default function CreatePage({ draft, engine, voices, shots, onSaved, onNe
                 <div className="flex justify-between text-[11px] text-faint font-mono"><span>2</span><span>5</span></div>
               </div>
               <div className="flex items-center gap-3">
-                {(progress || aiNote) && <span className="text-[13px] text-muted flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> {progress || aiNote}</span>}
+                {progress && <span className="text-[13px] text-muted flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> {progress}</span>}
                 <button onClick={generateScenes} disabled={!!busy} className={`btn btn-lg ${generated ? 'btn-outline' : 'btn-accent'}`}>
                   {generated ? <RefreshCw className="w-4 h-4" /> : <Wand2 className="w-4 h-4" />} {generated ? 'Regenerate' : 'Generate scenes'}
                 </button>
@@ -448,7 +418,7 @@ export default function CreatePage({ draft, engine, voices, shots, onSaved, onNe
       {/* 3. VIDEO */}
       {step === 'video' && project && (
         <div className="grid lg:grid-cols-[340px_1fr] gap-10 items-start">
-          <Phone className="w-[300px] mx-auto lg:mx-0" aspect="aspect-[9/16]">
+          <Phone className="w-[270px] mx-auto lg:mx-0" aspect="aspect-[9/19.5]">
             {videoUrl
               ? <video key={videoUrl} src={videoUrl} controls playsInline className="absolute inset-0 w-full h-full object-contain bg-black" />
               : <div className="absolute inset-0 grid place-items-center text-white/70 text-[13px]">{job?.status === 'FAILED' ? 'Render failed' : <span className="flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Rendering</span>}</div>}

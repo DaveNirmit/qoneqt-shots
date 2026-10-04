@@ -34,15 +34,7 @@ router.post('/generate', async (req, res) => {
       modelName: modelName || CONFIG.DEFAULT_MODEL
     });
 
-    // Auto-populate visuals for all scenes with a safe timeout
-    try {
-      await Promise.race([
-        visualService.populateProjectVisuals(script),
-        new Promise(r => setTimeout(r, 4000))
-      ]);
-    } catch (vErr) {
-      console.warn('[ModelRoute] Visual population warning:', vErr.message);
-    }
+    // Images are chosen per scene later, from the scene text itself (see /api/shots/image).
 
     const elapsedMs = Date.now() - startTime;
     res.json({
