@@ -18,7 +18,9 @@ export const CONFIG = {
   DEFAULT_MODEL: 'qwen2.5:1.5b',
   GEMINI: {
     API_KEY: process.env.GEMINI_API_KEY || '',
-    TEXT_MODEL: process.env.GEMINI_TEXT_MODEL || 'gemini-3.8-flash',
+    TEXT_MODEL: process.env.GEMINI_TEXT_MODEL || 'gemini-3-flash-preview',
+    // Tried in order when the main text model is busy or unreachable.
+    TEXT_FALLBACKS: ['gemini-flash-latest', 'gemini-flash-lite-latest', 'gemini-3.8-flash'],
     IMAGE_MODEL: process.env.GEMINI_IMAGE_MODEL || 'gemini-3.1-flash-image',
     VIDEO_MODEL: process.env.GEMINI_VIDEO_MODEL || 'veo-3.1-fast-generate-preview',
     VIDEO_ENABLED: process.env.GEMINI_VIDEO !== 'off'

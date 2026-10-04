@@ -45,6 +45,7 @@ export class GeminiVeoProvider extends VideoProvider {
         narration: scene.narration,
         onScreenText: scene.onScreenText,
         imageLocalPath: scene.imageLocalPath,
+        imageCredit: scene.imageCredit,
         videoLocalPath: veoPath,
         visualDescription: scene.visualDescription,
         duration: scene.duration,

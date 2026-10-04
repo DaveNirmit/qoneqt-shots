@@ -61,6 +61,7 @@ export class ScenePlanner {
         localPath: null,
         imageUrl: raw.imageUrl || `/api/visuals/image/scene_ai_datacenter.jpg`,
         imageLocalPath: raw.imageLocalPath || null,
+        imageCredit: raw.imageCredit || '',
         visualDescription: raw.visualDescription || '',
         motionPrompt: raw.motionPrompt || ''
       };

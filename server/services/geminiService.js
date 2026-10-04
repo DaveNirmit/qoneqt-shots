@@ -77,7 +77,17 @@ class GeminiService {
       }
       return data;
     } catch (err) {
-      if (err.name === 'AbortError') throw new Error('Gemini request timed out');
+      if (err.name === 'AbortError') {
+        const e = new Error('Gemini request timed out');
+        e.network = true;
+        throw e;
+      }
+      // Dropped or reused-dead connections surface as "fetch failed"; a fresh attempt usually works.
+      if (err instanceof TypeError || /fetch failed|ECONNRESET|ETIMEDOUT|socket|other side closed/i.test(err.message)) {
+        const e = new Error(`Network error talking to Gemini (${err.cause?.code || err.cause?.message || err.message})`);
+        e.network = true;
+        throw e;
+      }
       throw err;
     } finally {
       clearTimeout(timer);
@@ -105,7 +115,7 @@ class GeminiService {
     for (let i = 0; ; i++) {
       try { return await fn(); } catch (err) {
         // "limit: 0" means the tier does not include this model at all; waiting will not help.
-        const retriable = !/limit: 0/i.test(err.message) && (err.status === 429 || err.status === 503 || /quota|rate|overloaded|resource exhausted|unavailable/i.test(err.message));
+        const retriable = !/limit: 0/i.test(err.message) && (err.network || err.status === 429 || err.status === 503 || /quota|rate|overloaded|resource exhausted|unavailable|high demand/i.test(err.message));
         if (!retriable || i >= tries - 1) throw err;
         console.warn(`[Gemini] ${err.message}. Retrying in ${(baseMs * (i + 1)) / 1000}s`);
         await sleep(baseMs * (i + 1));
@@ -136,19 +146,39 @@ class GeminiService {
     }
   }
 
+  // Text models to try in order: the configured one, then fast models known to work on the free tier.
+  textModels() {
+    return [...new Set([CONFIG.GEMINI.TEXT_MODEL, ...CONFIG.GEMINI.TEXT_FALLBACKS])].filter(Boolean);
+  }
+
+  /**
+   * One JSON answer from the first text model that responds. A busy or unreachable model gets
+   * one quick retry, then the next model is tried. Resolves to the parsed JSON; `lastTextModel` says which model wrote it.
+   */
   async generateJSON(prompt, schema) {
-    const model = CONFIG.GEMINI.TEXT_MODEL;
-    const text = await this.withRetry(() => this.firstWorking([
-      async () => findText(await this.request('interactions', {
-        method: 'POST',
-        body: { model, input: prompt, response_format: { type: 'text', mime_type: 'application/json', schema } },
-      })),
-      async () => findText(await this.request(`models/${model}:generateContent`, {
-        method: 'POST',
-        body: { contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { responseMimeType: 'application/json' } },
-      })),
-    ]));
-    return parseJSON(text);
+    const errors = [];
+    for (const model of this.textModels()) {
+      try {
+        const text = await this.withRetry(() => this.firstWorking([
+          async () => findText(await this.request(`models/${model}:generateContent`, {
+            method: 'POST', timeoutMs: 45000,
+            body: { contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { responseMimeType: 'application/json' } },
+          })),
+          async () => findText(await this.request('interactions', {
+            method: 'POST', timeoutMs: 45000,
+            body: { model, input: prompt, response_format: { type: 'text', mime_type: 'application/json', schema } },
+          })),
+        ]), { tries: 2, baseMs: 3000 });
+        const data = parseJSON(text);
+        this.lastTextModel = model;
+        return data;
+      } catch (err) {
+        errors.push(`${model}: ${err.message.replace(/https?:\S+/g, '').slice(0, 120)}`);
+        if (err.status === 401 || err.status === 403) break; // bad key: other models will fail too
+        console.warn(`[Gemini] ${model} unavailable, trying the next model`);
+      }
+    }
+    throw new Error(errors.join(' | '));
   }
 
   /** Generates a 9:16 image and stores it in the image cache. */

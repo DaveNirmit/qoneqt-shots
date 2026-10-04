@@ -53,6 +53,7 @@ export class DemoVideoProvider extends VideoProvider {
       {
         narration: sceneConfig.narration,
         imageLocalPath: sceneConfig.imageLocalPath,
+        imageCredit: sceneConfig.imageCredit,
         onScreenText: sceneConfig.onScreenText,
         visualDescription: sceneConfig.visualDescription || sceneConfig.visualPrompt,
         duration

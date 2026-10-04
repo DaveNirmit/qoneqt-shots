@@ -24,7 +24,7 @@ const SUGGESTIONS = [
 ];
 
 const TONES = ['Informative', 'Energetic', 'Storytelling'];
-const SCENE_SECONDS = [3, 4, 5, 6, 7, 8, 10];
+const SCENE_SECONDS = [4, 5, 6, 7, 8, 9, 10, 12, 15];
 const STAGES = [
   ['SCENE_PLANNING', 'Planning scenes'],
   ['AUDIO_SYNTHESIS', 'Recording narration'],
@@ -60,22 +60,25 @@ const SceneCard = React.memo(function SceneCard({ s, i, imgBusy, disabled, canRe
           : <div className="absolute inset-0 skeleton grid place-items-center"><ImageIcon className="w-5 h-5 text-faint" /></div>}
         {imgBusy && <div className="absolute inset-0 bg-white/60 grid place-items-center"><Loader2 className="w-5 h-5 animate-spin" /></div>}
         <span className="absolute top-2.5 left-2.5 font-mono text-[11px] text-white bg-black/45 backdrop-blur px-1.5 py-0.5 rounded">SCENE {String(i + 1).padStart(2, '0')}</span>
-        {s.onScreenText && <div className="absolute inset-x-4 bottom-4 text-center"><span className="inline bg-white text-ink text-[13px] font-semibold px-1.5 py-0.5 rounded [box-decoration-break:clone]">{s.onScreenText}</span></div>}
+        {s.imageProvider && <span className="absolute top-2.5 right-2.5 text-[11px] text-white bg-black/45 backdrop-blur px-1.5 py-0.5 rounded">{s.imageProvider === 'photo' || s.imageProvider === 'search' ? 'Photo' : 'AI image'}</span>}
+        {s.onScreenText && <div className="absolute inset-x-4 top-10 text-center"><span className="inline bg-black/55 text-white text-[12px] font-semibold px-1.5 py-0.5 rounded [box-decoration-break:clone]">{s.onScreenText}</span></div>}
+        {s.narration && <div className="absolute inset-x-4 bottom-4 text-center"><span className="inline bg-black/45 text-white text-[12px] font-semibold px-1.5 py-0.5 rounded [box-decoration-break:clone]">{s.narration.split(' ').slice(0, 6).join(' ')}...</span></div>}
       </div>
       <div className="p-4 space-y-3">
         <div>
-          <label className="label">On-screen text</label>
+          <label className="label">Headline (top of the screen)</label>
           <input className="input font-medium" value={s.onScreenText || ''} onChange={(e) => onChange(i, { onScreenText: e.target.value })} />
         </div>
         <div>
-          <label className="label">Narration</label>
+          <label className="label">Narration (spoken, and shown as subtitles)</label>
           <textarea rows={3} className="input resize-none text-[13px]" value={s.narration || ''} onChange={(e) => onChange(i, { narration: e.target.value })} />
         </div>
         <div className="flex items-center gap-2 text-[12px]">
           <select className="input !w-auto !py-1 text-[12px]" value={s.duration} onChange={(e) => onChange(i, { duration: Number(e.target.value) })} aria-label="Scene length">
-            {SCENE_SECONDS.map((n) => <option key={n} value={n}>{n}s</option>)}
+            {[...new Set([...SCENE_SECONDS, Number(s.duration) || 6])].sort((a, b) => a - b).map((n) => <option key={n} value={n}>{n}s</option>)}
           </select>
           <button onClick={() => onNewImage(i, s)} disabled={disabled} className="btn btn-ghost btn-sm"><ImageIcon className="w-3.5 h-3.5" /> New image</button>
+          {s.imageCredit && <span className="text-[11px] text-faint truncate" title={s.imageCredit}>{s.imageCredit}</span>}
           <button onClick={() => onRemove(i)} disabled={!canRemove} className="btn btn-ghost btn-sm ml-auto hover:!text-bad"><Trash2 className="w-3.5 h-3.5" /></button>
         </div>
       </div>
@@ -120,6 +123,8 @@ export default function CreatePage({ draft, engine, voices, shots, onSaved, onNe
   const [job, setJob] = useState(null);
   const [copied, setCopied] = useState(false);
   const pollRef = useRef(null);
+  const genRef = useRef(0); // bumps on every new scene generation, render or unmount to stop background image work
+  const [aiNote, setAiNote] = useState('');
 
   useEffect(() => {
     if (!draft.projectId) return;
@@ -134,7 +139,7 @@ export default function CreatePage({ draft, engine, voices, shots, onSaved, onNe
       .catch(() => { setError('That project could not be opened.'); setStep('idea'); });
   }, [draft.projectId]);
 
-  useEffect(() => () => clearInterval(pollRef.current), []);
+  useEffect(() => () => { clearInterval(pollRef.current); genRef.current++; }, []);
 
   const voiceName = (voices.find((v) => v.id === voice) || {}).name || '';
   const update = (patch) => setProject((p) => ({ ...p, ...patch }));
@@ -144,6 +149,8 @@ export default function CreatePage({ draft, engine, voices, shots, onSaved, onNe
   titleRef.current = project?.title || topic;
   const scenesRef = useRef([]);
   scenesRef.current = project?.scenes || [];
+  const projectRef = useRef(null);
+  projectRef.current = project;
 
   const persist = async (p) => {
     const res = await saveProject({ ...p, topic, voice, tone, totalDuration: totalSeconds(p.scenes) });
@@ -169,35 +176,79 @@ export default function CreatePage({ draft, engine, voices, shots, onSaved, onNe
     } finally { setBusy(''); }
   };
 
-  // Step 2: Gemini (or the local model) directs N scenes, then an image is made for each.
+  // Paint AI versions of the scene images one by one, replacing the quick photos. Stops if anything newer starts.
+  const upgradeToAI = async (gen, startScenes) => {
+    let replaced = 0;
+    for (let i = 0; i < startScenes.length; i++) {
+      if (genRef.current !== gen) return;
+      setAiNote(`Painting AI images ${i + 1} of ${startScenes.length}. You can render any time.`);
+      const s = startScenes[i];
+      try {
+        const img = await generateShotImage({
+          mode: 'ai', prompt: s.visualDescription, text: s.onScreenText, narration: s.narration, topic: titleRef.current, index: i,
+          exclude: scenesRef.current.map((x) => x.imageLocalPath).filter(Boolean),
+        });
+        if (genRef.current !== gen) return;
+        if (img.provider !== 'pollinations' && img.provider !== 'gemini') continue; // AI unavailable: keep the photo
+        replaced++;
+        setProject((p) => {
+          if (!p?.scenes?.[i] || p.scenes[i].imageLocalPath !== s.imageLocalPath) return p; // changed by the user meanwhile
+          return { ...p, scenes: p.scenes.map((x, j) => (j === i ? { ...x, imageUrl: img.url, imageLocalPath: img.localPath, imageProvider: img.provider, imageCredit: '' } : x)) };
+        });
+      } catch { /* keep the photo */ }
+    }
+    if (genRef.current !== gen) return;
+    setAiNote('');
+    if (replaced) setTimeout(() => { if (genRef.current === gen && projectRef.current) persist(projectRef.current).catch(() => {}); }, 300);
+  };
+
+  const photoFor = (s, i, exclude = []) => generateShotImage({
+    mode: 'photo', query: s.searchQuery, prompt: s.visualDescription, text: s.onScreenText, topic: titleRef.current, index: i, exclude,
+  }).catch(() => null);
+  const withImage = (s, img) => (img ? { ...s, imageUrl: img.url, imageLocalPath: img.localPath, imageProvider: img.provider, imageCredit: img.credit || '' } : s);
+
+  // Step 2: Gemini (or the local model) writes N scenes; matching photos appear at once, AI images follow.
   const generateScenes = async () => {
-    setError(''); setBusy('scenes'); setProgress('Directing scenes...');
+    const gen = ++genRef.current;
+    setAiNote('');
+    setError(''); setBusy('scenes'); setProgress('Writing scenes...');
     try {
       const res = await generateShotScenes({ brief: project, count, tone, voiceName, length: duration, seed: Date.now(), avoid: project.shotsGenerated ? (project.scenes || []).map((x) => x.onScreenText).filter(Boolean) : [] });
-      let scenes = res.scenes.map((s) => ({ ...s, imageUrl: null, imageLocalPath: null }));
-      setProject((p) => ({ ...p, scenes, shotsGenerated: true, shotsProvider: res.provider }));
+      let scenes = res.scenes.map((s) => ({ ...s, imageUrl: null, imageLocalPath: null, imageCredit: '' }));
+      const postText = { ...(res.caption ? { caption: res.caption } : {}), ...(res.hashtags?.length ? { hashtags: res.hashtags } : {}) };
+      setProject((p) => ({ ...p, ...postText, scenes, shotsGenerated: true, shotsProvider: res.provider }));
+
+      // All photos at once (about two seconds), then replace any accidental duplicates.
+      setProgress('Finding images...');
+      const photos = await Promise.all(scenes.map((s, i) => photoFor(s, i)));
+      scenes = scenes.map((s, i) => withImage(s, photos[i]));
       for (let i = 0; i < scenes.length; i++) {
-        setProgress(`Creating image ${i + 1} of ${scenes.length}${shots?.pollinationsToken ? '' : ' (free image service: up to a minute each)'}`);
-        try {
-          const img = await generateShotImage({ prompt: scenes[i].visualDescription, text: scenes[i].onScreenText, narration: scenes[i].narration, topic: project.title, index: i, exclude: scenes.flatMap((x) => [x.imageLocalPath, x.imageUrl]).filter(Boolean) });
-          scenes = scenes.map((s, j) => (j === i ? { ...s, imageUrl: img.url, imageLocalPath: img.localPath, imageProvider: img.provider } : s));
-          setProject((p) => ({ ...p, scenes }));
-        } catch { /* leave the slot empty; the renderer falls back to a stock frame */ }
+        if (scenes[i].imageLocalPath && scenes.findIndex((x) => x.imageLocalPath === scenes[i].imageLocalPath) !== i) {
+          scenes[i] = withImage(scenes[i], await photoFor(scenes[i], i, scenes.map((x) => x.imageLocalPath).filter(Boolean)));
+        }
       }
-      const saved = await persist({ ...project, scenes, shotsGenerated: true, shotsProvider: res.provider, exportUrl: null, status: 'draft' });
+      if (genRef.current !== gen) return;
+      setProject((p) => ({ ...p, scenes }));
+      const saved = await persist({ ...project, ...postText, scenes, shotsGenerated: true, shotsProvider: res.provider, exportUrl: null, status: 'draft' });
+      if (genRef.current !== gen) return;
       setProject(saved);
       setJob(null);
+      upgradeToAI(gen, saved.scenes);
     } catch (e) {
       setError(e.message || 'Scenes could not be generated.');
     } finally { setBusy(''); setProgress(''); }
   };
 
+  // "New image": another matching photo, immediately.
   const newImage = useCallback(async (i, s) => {
     setBusy(`img-${i}`);
     try {
-      const img = await generateShotImage({ prompt: s.visualDescription, text: s.onScreenText, narration: s.narration, topic: titleRef.current, index: i, exclude: scenesRef.current.flatMap((x) => [x.imageLocalPath, x.imageUrl]).filter(Boolean) });
-      updateScene(i, { imageUrl: img.url, imageLocalPath: img.localPath, imageProvider: img.provider });
-    } catch { setError('A new image could not be made.'); }
+      const img = await generateShotImage({
+        mode: 'photo', query: s.searchQuery, prompt: s.visualDescription, text: s.onScreenText, topic: titleRef.current, index: i + Math.floor(Math.random() * 7),
+        exclude: scenesRef.current.map((x) => x.imageLocalPath).filter(Boolean),
+      });
+      updateScene(i, { imageUrl: img.url, imageLocalPath: img.localPath, imageProvider: img.provider, imageCredit: img.credit || '' });
+    } catch { setError('A new image could not be found.'); }
     finally { setBusy(''); }
   }, [updateScene]);
 
@@ -205,6 +256,8 @@ export default function CreatePage({ draft, engine, voices, shots, onSaved, onNe
   const render = async () => {
     const empty = project.scenes.findIndex((s) => !(s.onScreenText || '').trim() && !(s.narration || '').trim());
     if (empty >= 0) return setError(`Scene ${empty + 1} is empty. Add text or remove it.`);
+    genRef.current++; // stop background image work: the video uses the images as they are now
+    setAiNote('');
     setError(''); setBusy('render');
     try {
       const saved = await persist({ ...project, exportUrl: null, status: 'rendering' });
@@ -330,13 +383,21 @@ export default function CreatePage({ draft, engine, voices, shots, onSaved, onNe
       {step === 'script' && project && (
         <div className="grid lg:grid-cols-[1fr_300px] gap-8 items-start">
           <div>
-            <div className="flex flex-wrap items-center gap-2 mb-3">
-              {project.aiGenerated ? <Badge tone="ok"><Sparkles className="w-3 h-3" /> Brief by local AI</Badge> : <Badge tone="warn">Template brief (local AI offline)</Badge>}
-              {generated && <Badge tone={project.shotsProvider === 'gemini' ? 'accent' : 'neutral'}>Scenes by {project.shotsProvider === 'gemini' ? 'Gemini' : project.shotsProvider === 'local' ? 'local AI' : 'template'}</Badge>}
-            </div>
             <input className="w-full bg-transparent text-[26px] font-semibold tracking-tight outline-none border-b border-transparent focus:border-line-strong pb-1"
               value={project.title || ''} onChange={(e) => update({ title: e.target.value })} aria-label="Title" />
             {project.hook && <p className="mt-2 text-muted">{project.hook}</p>}
+            {Array.isArray(project.keyPoints) && project.keyPoints.length > 0 && (
+              <div className="card p-5 mt-5">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <span className="eyebrow">Key points</span>
+                  <span className="text-[12px] text-faint">One per line. Scenes are written from these, so edit them first.</span>
+                </div>
+                {project.concept && <p className="mt-3 text-[14px] font-medium">{project.concept}</p>}
+                <textarea rows={Math.min(8, project.keyPoints.length + 1)} className="input resize-none text-[14px] leading-relaxed mt-3"
+                  value={project.keyPoints.join('\n')} onChange={(e) => update({ keyPoints: e.target.value.split('\n') })} aria-label="Key points" />
+                {project.creatorNotes && <p className="mt-2 text-[12px] text-muted">Your wishes: {project.creatorNotes}</p>}
+              </div>
+            )}
 
             <div className="card p-5 mt-6 flex flex-wrap items-center gap-6">
               <div className="flex-1 min-w-[220px]">
@@ -345,7 +406,7 @@ export default function CreatePage({ draft, engine, voices, shots, onSaved, onNe
                 <div className="flex justify-between text-[11px] text-faint font-mono"><span>2</span><span>5</span></div>
               </div>
               <div className="flex items-center gap-3">
-                {progress && <span className="text-[13px] text-muted flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> {progress}</span>}
+                {(progress || aiNote) && <span className="text-[13px] text-muted flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> {progress || aiNote}</span>}
                 <button onClick={generateScenes} disabled={!!busy} className={`btn btn-lg ${generated ? 'btn-outline' : 'btn-accent'}`}>
                   {generated ? <RefreshCw className="w-4 h-4" /> : <Wand2 className="w-4 h-4" />} {generated ? 'Regenerate' : 'Generate scenes'}
                 </button>

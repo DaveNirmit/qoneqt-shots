@@ -33,293 +33,207 @@ function cleanAndParseJSON(text) {
   }
 }
 
-// Validate script schema structure
+// ---------------------------------------------------------------------------
+// Brief: the local model turns the creator's rough words into a clear, on-topic plan.
+// ---------------------------------------------------------------------------
+
+const STOP_WORDS = new Set(['that', 'this', 'with', 'from', 'your', 'about', 'what', 'when', 'make', 'video', 'into', 'have',
+  'they', 'them', 'their', 'there', 'just', 'like', 'some', 'more', 'much', 'very', 'really', 'want', 'does', 'will', 'would',
+  'could', 'should', 'funny', 'useful', 'short', 'reel', 'shot', 'please', 'also', 'explain', 'explained', 'tell', 'show']);
+const contentWords = (s) => new Set((String(s || '').toLowerCase().match(/[a-z0-9]+/g) || []).filter((w) => w.length > 3 && !STOP_WORDS.has(w)));
+
+// True when the brief talks about at least one of the creator's own content words (or a close form of it).
+function isOnTopic(script, topic) {
+  const asked = contentWords(topic);
+  if (!asked.size) return true;
+  const body = [...contentWords([script.title, script.concept, ...(script.keyPoints || [])].join(' '))];
+  return [...asked].some((w) => body.some((b) => b === w || b.startsWith(w.slice(0, 5)) || w.startsWith(b.slice(0, 5))));
+}
+
+const wordCount = (s) => (String(s || '').match(/\S+/g) || []).length;
+// About 2.5 spoken words per second, plus a short pause.
+const secondsFor = (text) => Math.max(4, Math.min(15, Math.round(wordCount(text) / 2.5 + 0.8)));
+const shortText = (text) => {
+  const clause = String(text || '').split(/[,:;.!?]/)[0].trim();
+  return clause.split(/\s+/).slice(0, 7).join(' ');
+};
+
+function scenesFromPoints(hook, points, cta) {
+  return [hook, ...points, cta].filter(Boolean).map((line, idx) => ({
+    id: `scene-${idx + 1}`,
+    sceneNumber: idx + 1,
+    narration: line,
+    onScreenText: shortText(line),
+    duration: secondsFor(line),
+    visualDescription: line,
+    visualStyle: 'kinetic_bold',
+    edited: false
+  }));
+}
+
+const normalizeTags = (tags) => {
+  const list = (Array.isArray(tags) ? tags : String(tags || '').split(/[\s,]+/))
+    .map((t) => String(t).replace(/[^A-Za-z0-9_]/g, ''))
+    .filter((t) => t.length > 1)
+    .map((t) => `#${t}`);
+  return [...new Set(list)].slice(0, 7);
+};
+
+// Validate and normalise the brief. Throws when it is too thin to be useful (the caller retries).
 function validateScriptSchema(data) {
-  if (!data || typeof data !== 'object') {
-    throw new Error('Script data is not an object');
+  if (!data || typeof data !== 'object') throw new Error('Script data is not an object');
+
+  const title = String(data.title || data.titleOptions?.[0] || '').trim();
+  if (!title) throw new Error('Brief has no title');
+
+  // A call to action is not a key point: keep it out of the list (it has its own cta field).
+  const isCta = (p) => /^(follow|subscribe|like|share|comment|don't forget|dont forget)\b|follow (us|me|for)/i.test(p);
+  let keyPoints = (Array.isArray(data.keyPoints) ? data.keyPoints : [])
+    .map((p) => String(p || '').trim())
+    .filter((p) => wordCount(p) >= 3 && !isCta(p))
+    .slice(0, 6);
+  if (keyPoints.length < 2 && Array.isArray(data.scenes)) {
+    keyPoints = data.scenes.map((s) => String(s?.narration || '').trim()).filter((p) => wordCount(p) >= 3).slice(0, 6);
   }
+  if (keyPoints.length < 2) throw new Error('Brief has too few key points');
 
-  const title = (data.title || data.titleOptions?.[0] || 'Untitled Forge Reel').trim();
-  const hook = (data.hook || '').trim();
-  const concept = (data.concept || '').trim();
-  const cta = (data.cta || data.callToAction || 'Follow for more insights.').trim();
-  const caption = (data.caption || '').trim();
-  const hashtags = Array.isArray(data.hashtags) ? data.hashtags : ['#QoneqtForge', '#TechTrends', '#Creator'];
-
-  if (!Array.isArray(data.scenes) || data.scenes.length === 0) {
-    throw new Error('Script does not contain a valid array of scenes');
-  }
-
-  let validScenes = data.scenes.map((scene, idx) => {
-    return {
-      id: scene.id || `scene-${idx + 1}`,
-      sceneNumber: idx + 1,
-      narration: (scene.narration || '').trim(),
-      onScreenText: (scene.onScreenText || scene.text || '').trim(),
-      duration: Math.max(3, Math.min(12, Number(scene.duration) || 5)),
-      visualDescription: (scene.visualDescription || scene.visualDirection || 'Dynamic motion graphic with kinetic text').trim(),
-      visualStyle: scene.visualStyle || 'kinetic_bold',
-      edited: false
-    };
-  });
-
-  // If model only returned 1 or 2 scenes, expand into structured 4-scene story arc
-  if (validScenes.length < 3) {
-    const s1 = validScenes[0];
-    validScenes = [
-      {
-        id: 'scene-1',
-        sceneNumber: 1,
-        narration: hook || s1.narration || 'Stop scrolling. A major breakthrough just dropped.',
-        onScreenText: (s1.onScreenText || 'BREAKTHROUGH\\nDROPPED').toUpperCase(),
-        duration: 5,
-        visualDescription: 'Kinetic bold typography on dark canvas with pulsing electric violet ring',
-        visualStyle: 'kinetic_bold',
-        edited: false
-      },
-      {
-        id: 'scene-2',
-        sceneNumber: 2,
-        narration: s1.narration || concept || 'Traditional workflows are evaporating in real-time.',
-        onScreenText: 'WORKFLOWS\\nEVAPORATING',
-        duration: 6,
-        visualDescription: 'Split screen kinetic motion with glowing cyan data accents and animated bar metrics',
-        visualStyle: 'neon_cyber',
-        edited: false
-      },
-      {
-        id: 'scene-3',
-        sceneNumber: 3,
-        narration: 'Creators adapting right now are gaining 10x leverage over legacy stacks.',
-        onScreenText: '10X LEVERAGE\\nNEW STACKS',
-        duration: 6,
-        visualDescription: 'Vibrant gradient mesh background with bold floating cards and staggered text reveal',
-        visualStyle: 'sunset_glow',
-        edited: false
-      },
-      {
-        id: 'scene-4',
-        sceneNumber: 4,
-        narration: cta || 'Follow for more daily breakthroughs in creative tech.',
-        onScreenText: 'ARE YOU READY?\\nFOLLOW FOR MORE',
-        duration: 5,
-        visualDescription: 'High contrast clean editorial card with pulsating call-to-action button badge',
-        visualStyle: 'editorial_minimal',
-        edited: false
-      }
-    ];
-  }
-
-  // Calculate total duration
-  const totalDuration = validScenes.reduce((acc, s) => acc + s.duration, 0);
+  const hook = String(data.hook || '').trim();
+  const cta = String(data.cta || data.callToAction || '').trim() || 'Follow for more.';
+  const scenes = scenesFromPoints(hook, keyPoints, cta);
+  const hashtags = normalizeTags(data.hashtags);
 
   return {
     title,
-    titleOptions: Array.isArray(data.titleOptions) ? data.titleOptions : [title],
-    concept,
+    titleOptions: Array.isArray(data.titleOptions) && data.titleOptions.length ? data.titleOptions : [title],
+    concept: String(data.concept || '').trim(),
+    audience: String(data.audience || '').trim(),
+    creatorNotes: String(data.creatorNotes || '').trim(),
     hook,
     cta,
-    caption,
-    hashtags,
-    scenes: validScenes,
-    totalDuration,
+    caption: String(data.caption || '').trim(),
+    hashtags: hashtags.length ? hashtags : ['#QoneqtShots'],
+    keyPoints,
+    scenes,
+    totalDuration: scenes.reduce((n, s) => n + s.duration, 0),
     generator: 'local-ollama',
     aiGenerated: true
   };
 }
 
-// High quality template fallback for offline / uninstalled model mode
+// Offline fallback: an honest outline the scene writer (Gemini) can fill in. It makes no claims of its own.
 export function getTemplateFallback(topic, options = {}) {
-  const tone = options.tone || 'engaging';
-  const duration = Number(options.duration) || 30;
   const sourceName = options.sourceName || 'Trend Hub';
   const sourceUrl = options.sourceUrl || '';
-
-  const cleanTopic = topic.trim() || 'The Future of Creative Technology';
-
+  const subject = String(topic || '').trim().replace(/\s+/g, ' ') || 'Something worth knowing';
+  const title = subject.length > 60 ? `${subject.slice(0, 57).trim()}...` : subject.charAt(0).toUpperCase() + subject.slice(1);
+  const keyPoints = [
+    `What ${subject} is, explained in one simple sentence.`,
+    `Why ${subject} matters in everyday life.`,
+    `The most common misunderstanding about ${subject}.`,
+    `One practical thing you can do about ${subject} today.`
+  ];
+  const hook = `Here is something about ${subject} most people never think about.`;
+  const cta = 'Follow for more short explainers like this.';
+  const scenes = scenesFromPoints(hook, keyPoints, cta);
   return {
-    title: `${cleanTopic}: What You Need To Know`,
-    titleOptions: [
-      `${cleanTopic}: What You Need To Know`,
-      `The Unspoken Reality of ${cleanTopic}`,
-      `Why Everyone Is Talking About ${cleanTopic}`
-    ],
-    concept: `A crisp breakdown of ${cleanTopic} and its immediate impact on creators and tech thinkers.`,
-    hook: `Stop scrolling—this shift in ${cleanTopic} changes everything we took for granted.`,
-    cta: `What is your take on this? Drop your thoughts below.`,
-    caption: `Breaking down ${cleanTopic} in under a minute. Key takeaways and what comes next.`,
-    hashtags: ['#QoneqtForge', '#CreatorStudio', '#TechBreakdown', '#FutureTech'],
+    title,
+    titleOptions: [title],
+    concept: `A short, clear explainer about ${subject}.`,
+    audience: 'everyday Qoneqt viewers',
+    creatorNotes: '',
+    hook,
+    cta,
+    caption: `A quick, clear look at ${subject}. What would you add?`,
+    hashtags: ['#QoneqtShots', '#Explained', '#LearnOnQoneqt'],
+    keyPoints,
     sourceAttribution: sourceUrl ? { name: sourceName, url: sourceUrl } : null,
-    scenes: [
-      {
-        id: 'scene-1',
-        sceneNumber: 1,
-        narration: `Stop scrolling. A major shift is happening in ${cleanTopic}, and most people haven't noticed yet.`,
-        onScreenText: `THE SHIFT IN\n${cleanTopic.toUpperCase()}`,
-        duration: 5,
-        visualDescription: 'Kinetic bold typography on dark charcoal canvas with electric violet pulsing ring',
-        visualStyle: 'kinetic_bold',
-        edited: false
-      },
-      {
-        id: 'scene-2',
-        sceneNumber: 2,
-        narration: `Here is the core signal: traditional barriers are evaporating, leaving only speed, clarity, and genuine quality.`,
-        onScreenText: 'BARRIERS: EVAPORATING\nQUALITY: ESSENTIAL',
-        duration: 6,
-        visualDescription: 'Split screen kinetic motion with glowing cyan data accents and animated bar metrics',
-        visualStyle: 'neon_cyber',
-        edited: false
-      },
-      {
-        id: 'scene-3',
-        sceneNumber: 3,
-        narration: `Creators who adapt right now are seeing exponential leverage compared to those relying on legacy workflows.`,
-        onScreenText: 'EXPONENTIAL LEVERAGE\nNEW WORKFLOWS',
-        duration: 7,
-        visualDescription: 'Vibrant gradient mesh background with bold floating cards and staggered text reveal',
-        visualStyle: 'sunset_glow',
-        edited: false
-      },
-      {
-        id: 'scene-4',
-        sceneNumber: 4,
-        narration: `The real question isn't whether this changes the game—it is whether you are ready to lead it. Follow for more deep dives.`,
-        onScreenText: 'ARE YOU READY?\nFOLLOW FOR MORE',
-        duration: 6,
-        visualDescription: 'High contrast clean editorial card with pulsating call-to-action button badge',
-        visualStyle: 'editorial_minimal',
-        edited: false
-      }
-    ],
-    totalDuration: 24,
+    scenes,
+    totalDuration: scenes.reduce((n, s) => n + s.duration, 0),
     generator: 'template-fallback',
     aiGenerated: false,
-    notice: 'Generated using Qoneqt Shots Editorial Template (Local model was offline or bypassed).'
+    notice: 'Outline only: the local model was offline, so the scene writer fills in the content.'
   };
 }
+
+const BRIEF_EXAMPLE = `{"title":"Why Your Phone Dies in the Cold","concept":"Cold weather slows the chemistry inside a phone battery, so it reports less charge, and keeping it warm fixes most of it.","audience":"Everyday phone users","creatorNotes":"Keep it simple and practical.","hook":"Ever had your phone die at 30 percent on a cold day?","keyPoints":["Phones run on lithium-ion batteries that work through chemical reactions.","Cold slows those reactions, so the battery cannot deliver power as easily.","The phone reads that as a low charge and can shut down early to protect itself.","Most of the charge comes back once the phone warms up again.","Keep it in an inside pocket and avoid charging it while it is freezing."],"cta":"Follow for more everyday tech explained in under a minute.","caption":"Your battery is not broken, it is just cold. Here is what happens inside and the easy fix. Has this happened to you?","hashtags":["#PhoneTips","#TechExplained","#WinterHacks","#Battery","#LifeHacks"]}`;
 
 class ScriptGenerator {
   async generateScript({
     topic,
-    audience = 'Tech Enthusiasts & Creators',
+    audience = 'everyday Qoneqt viewers',
     language = 'English',
-    tone = 'dynamic, engaging, punchy',
+    tone = 'Informative',
     duration = 30,
     visualStyle = 'kinetic_bold',
     sourceContext = null,
     modelName = CONFIG.DEFAULT_MODEL
   }) {
-    // Check if Ollama is accessible
+    const fallback = () => getTemplateFallback(topic, { tone, duration, sourceName: sourceContext?.name, sourceUrl: sourceContext?.url });
+
     const status = await ollamaService.checkStatus();
     if (!status.online) {
-      console.warn('Ollama runtime is offline. Using editorial template fallback.');
-      return getTemplateFallback(topic, {
-        tone,
-        duration,
-        sourceName: sourceContext?.name,
-        sourceUrl: sourceContext?.url
-      });
+      console.warn('Ollama runtime is offline. Using the outline fallback.');
+      return fallback();
+    }
+    if (!(await ollamaService.isModelInstalled(modelName))) {
+      console.warn(`Model ${modelName} is not installed locally. Using the outline fallback.`);
+      return fallback();
     }
 
-    // Verify model installed
-    const isInstalled = await ollamaService.isModelInstalled(modelName);
-    if (!isInstalled) {
-      console.warn(`Model ${modelName} is not installed locally. Using editorial template fallback.`);
-      return getTemplateFallback(topic, {
-        tone,
-        duration,
-        sourceName: sourceContext?.name,
-        sourceUrl: sourceContext?.url
-      });
-    }
+    const pointCount = duration <= 20 ? 3 : duration <= 45 ? 4 : 5;
+    const source = sourceContext?.title
+      ? `\nThe idea comes from this real news story. Stay faithful to it and do not add facts it does not support:\n- Headline: ${sourceContext.title}\n- Source: ${sourceContext.name || 'news'}\n- Snippet: ${sourceContext.snippet || ''}\n`
+      : '';
 
-    const sceneCount = duration <= 20 ? 3 : duration <= 45 ? 4 : 5;
+    const systemPrompt = `You are a script editor for short vertical videos on Qoneqt, a social media platform.
+A creator typed a rough idea, possibly with typos or extra instructions. Understand what they really want and turn it into a clear, accurate brief.
+Rules:
+- Stay on the creator's exact subject. Do not drift to artificial intelligence, technology or content creation unless the creator asked about that.
+- creatorNotes: any style wishes the creator wrote (for example "make it funny", "for students"). Empty if none.
+- keyPoints: ${pointCount} short, specific, true statements a viewer will learn, in a logical order (what it is or the problem, why it happens, what to do). Plain words. Never invent numbers, studies or quotes.
+- hook: one spoken sentence of at most 14 words that makes a viewer stop scrolling: a question or a surprising true fact.
+- cta: one short spoken sentence asking viewers to follow, comment or try it.
+- caption: 2 or 3 sentences for the post, ending with a question for the comments.
+- hashtags: 5 relevant hashtags with no spaces.
+- Tone: ${tone}. Audience: ${audience}. Language: ${language}.
+Return only JSON with the keys title, concept, audience, creatorNotes, hook, keyPoints, cta, caption, hashtags.`;
 
-    let sourcePromptContext = '';
-    if (sourceContext && sourceContext.title) {
-      sourcePromptContext = `
-ORIGINAL RESEARCH SOURCE (Retain truthfulness, do not hallucinate):
-- Headline: ${sourceContext.title}
-- Source: ${sourceContext.name || 'Verified Web'}
-- URL: ${sourceContext.url || 'N/A'}
-- Context / Snippet: ${sourceContext.snippet || 'Real current news article'}
-`;
-    }
+    const basePrompt = `Example. For the idea "my phone dies so fast when its cold outside??" a good brief is:
+${BRIEF_EXAMPLE}
 
-    const systemPrompt = `You are an elite short-form video creator and scriptwriter for vertical videos (Reels, TikTok, Shorts).
-Your scripts are written for speech, not essays.
-CRITICAL RULES:
-1. Opening hook must be sharp, specific, and hook the viewer in under 3 seconds.
-2. Exactly ${sceneCount} ordered scenes.
-3. Spoken narration must be natural, punchy, conversational, and fit the ${duration}-second total window.
-4. On-screen text must be brief (3-6 words per line, max 2 lines) formatted with '\\n' for punchy kinetic display.
-5. NEVER invent statistics, fake research institutions, or hallucinated quotes.
-6. Target audience: ${audience}. Tone: ${tone}. Language: ${language}.
-7. Return strictly valid JSON conforming to the schema below. No markdown outside JSON.`;
-
-    const userPrompt = `Create a viral vertical video script about: "${topic}"
-Target total video duration: ~${duration} seconds.
-${sourcePromptContext}
-
-Required JSON schema:
-{
-  "title": "Compelling video title",
-  "titleOptions": ["Alternative 1", "Alternative 2", "Alternative 3"],
-  "concept": "1-sentence core concept",
-  "hook": "Opening 3-second hook for scene 1",
-  "cta": "Call to action at the end",
-  "caption": "Short social media post caption",
-  "hashtags": ["#tag1", "#tag2", "#tag3", "#tag4"],
-  "scenes": [
-    {
-      "sceneNumber": 1,
-      "narration": "Exact words spoken by narrator for scene 1",
-      "onScreenText": "BOLD 2-4 WORD\\nKINETIC HOOK",
-      "duration": 5,
-      "visualDescription": "Detailed visual layout and kinetic motion cues",
-      "visualStyle": "${visualStyle}"
-    }
-  ]
-}`;
+Now the real one.
+Creator's idea: "${topic}"
+Video length: about ${duration} seconds.${source}
+Write the JSON brief for this idea.`;
 
     let lastError = null;
-    // Retry up to 2 times if model produces invalid JSON
-    for (let attempt = 1; attempt <= 2; attempt++) {
+    let userPrompt = basePrompt;
+    for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        console.log(`[ScriptGenerator] Invoking ${modelName} (Attempt ${attempt}/2)...`);
+        console.log(`[ScriptGenerator] Invoking ${modelName} (attempt ${attempt}/3)...`);
         const result = await ollamaService.generate(modelName, userPrompt, systemPrompt, {
           format: 'json',
-          temperature: 0.65,
-          timeoutMs: 60000
+          temperature: attempt === 1 ? 0.5 : 0.7,
+          timeoutMs: 60000,
+          maxTokens: 900
         });
-
-        const parsed = cleanAndParseJSON(result.response);
-        const validated = validateScriptSchema(parsed);
-
-        if (sourceContext && sourceContext.url) {
-          validated.sourceAttribution = {
-            name: sourceContext.name || 'Verified Source',
-            url: sourceContext.url
-          };
+        const validated = validateScriptSchema(cleanAndParseJSON(result.response));
+        if (!isOnTopic(validated, topic)) {
+          throw new Error(`Brief drifted off topic ("${validated.title}")`);
         }
-
+        if (sourceContext?.url) validated.sourceAttribution = { name: sourceContext.name || 'Source', url: sourceContext.url };
         return validated;
       } catch (err) {
         console.warn(`[ScriptGenerator] Attempt ${attempt} failed:`, err.message);
         lastError = err;
+        userPrompt = `${basePrompt}\n\nYour previous answer was not usable (${err.message}). Write about exactly this subject: "${topic}".`;
       }
     }
 
-    console.warn('[ScriptGenerator] Model output parsing failed after retries. Falling back to editorial template.');
-    const fallback = getTemplateFallback(topic, {
-      tone,
-      duration,
-      sourceName: sourceContext?.name,
-      sourceUrl: sourceContext?.url
-    });
-    fallback.modelError = lastError?.message || 'Model output failed schema validation';
-    return fallback;
+    console.warn('[ScriptGenerator] The local model could not produce a usable brief. Using the outline fallback.');
+    const out = fallback();
+    out.modelError = lastError?.message || 'Model output failed validation';
+    return out;
   }
 
   async regenerateScene(sceneNumber, currentScene, projectContext, modelName = CONFIG.DEFAULT_MODEL) {

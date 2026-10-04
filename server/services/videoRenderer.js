@@ -47,9 +47,24 @@ class VideoRenderer {
   }
 
   // Render a single scene: Image + Ken Burns zoompan + Spoken Audio + On-screen Text
+  // Length of a media file in seconds, read from FFmpeg's "Duration:" line (0 if unknown).
+  probeDuration(file) {
+    return new Promise((resolve) => {
+      const child = spawn(this.ffmpegPath, ['-hide_banner', '-i', file], { stdio: ['ignore', 'ignore', 'pipe'] });
+      let err = '';
+      child.stderr.on('data', (d) => { err += d.toString(); });
+      child.on('close', () => {
+        const m = err.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
+        resolve(m ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) : 0);
+      });
+      child.on('error', () => resolve(0));
+    });
+  }
+
   async renderSceneClip(scene, sceneIdx, projectTitle, voice = 'en-US-ChristopherNeural') {
-    const sceneDuration = Math.max(3, Math.min(12, Number(scene.duration) || 5));
-    const frames = sceneDuration * 30; // 30 fps
+    const planned = Math.max(3, Math.min(20, Number(scene.duration) || 5));
+    let sceneDuration = planned;
+    let frames = Math.round(sceneDuration * 30); // 30 fps
     const timestamp = Date.now();
     const clipOut = path.join(this.cacheDir, `scene_clip_${sceneIdx}_${timestamp}.mp4`);
 
@@ -73,18 +88,23 @@ class VideoRenderer {
       }
     }
 
+    // The scene lasts as long as its narration needs (plus a short breath), never cutting the voice off.
+    let spoken = 0;
+    if (audioPath) {
+      spoken = await this.probeDuration(audioPath);
+      if (spoken > 0) sceneDuration = Math.min(25, Math.max(planned, Math.round((spoken + 0.6) * 10) / 10));
+    }
+    frames = Math.round(sceneDuration * 30);
+
     const fontArg = fs.existsSync("C:/Windows/Fonts/segoeuib.ttf")
       ? ":fontfile='C\\:/Windows/Fonts/segoeuib.ttf'"
       : fs.existsSync("C:/Windows/Fonts/arialbd.ttf")
       ? ":fontfile='C\\:/Windows/Fonts/arialbd.ttf'"
       : "";
 
-    // Clean and wrap on-screen text. drawtext has no word-wrap, so each line becomes its own
-    // centred drawtext read from a temp file (expansion=none keeps %, :, ' and \ literal).
-    const rawText = (scene.onScreenText || scene.text || '')
-      .replace(/\\n|[\r\n]+/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
+    // drawtext has no word-wrap, so every line is its own centred drawtext read from a temp file
+    // (expansion=none keeps %, :, ' and \ literal).
+    const clean = (t) => String(t || '').replace(/\\n|[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
     const wrap = (text, max) => {
       const out = [];
       let cur = '';
@@ -96,18 +116,52 @@ class VideoRenderer {
       if (cur) out.push(cur);
       return out;
     };
-    const lines = rawText ? wrap(rawText, 22).slice(0, 4) : [];
-    const fontSize = lines.length >= 3 ? 32 : 36;
-    const lineH = Math.round(fontSize * 1.5);
-    const blockTop = Math.round(1280 * 0.62 - ((lines.length - 1) * lineH) / 2);
     const captionFiles = [];
-    const captionFilters = lines.map((line, li) => {
-      const file = path.join(this.cacheDir, `cap_${timestamp}_${sceneIdx}_${li}.txt`);
-      fs.writeFileSync(file, line, 'utf8');
+    const drawLine = (text, { size, y, alpha = 0.5, enable = '' }) => {
+      const file = path.join(this.cacheDir, `cap_${timestamp}_${sceneIdx}_${captionFiles.length}.txt`);
+      fs.writeFileSync(file, text, 'utf8');
       captionFiles.push(file);
       const ref = file.replace(/\\/g, '/').replace(/:/g, '\\:');
-      return `drawtext=textfile='${ref}':expansion=none${fontArg}:fontcolor=white:fontsize=${fontSize}:x=(w-text_w)/2:y=${blockTop + li * lineH}:borderw=4:bordercolor=black:shadowcolor=black@0.85:shadowx=2:shadowy=2:box=1:boxcolor=black@0.45:boxborderw=12`;
-    });
+      return `drawtext=textfile='${ref}':expansion=none${fontArg}:fontcolor=white:fontsize=${size}:x=(w-text_w)/2:y=${y}:borderw=3:bordercolor=black:shadowcolor=black@0.8:shadowx=2:shadowy=2:box=1:boxcolor=black@${alpha}:boxborderw=12${enable ? `:enable='${enable}'` : ''}`;
+    };
+    const captionFilters = [];
+
+    // Headline: the scene's short title, at the top for the whole scene.
+    const headline = clean(scene.onScreenText || scene.text);
+    wrap(headline, 26).slice(0, 2).forEach((line, li) => captionFilters.push(drawLine(line, { size: 30, y: 150 + li * 46, alpha: 0.55 })));
+
+    // Subtitles: the narration in short chunks, timed to the spoken audio so the screen shows what the voice says.
+    const narration = clean(scene.narration);
+    if (narration) {
+      const chunks = [];
+      let cur = [];
+      for (const word of narration.split(' ')) {
+        cur.push(word);
+        const text = cur.join(' ');
+        if ((/[.!?]["')]?$/.test(word) && cur.length >= 2) || (/[,;:]$/.test(word) && cur.length >= 3) || cur.length >= 6 || text.length >= 34) {
+          chunks.push(text);
+          cur = [];
+        }
+      }
+      if (cur.length) chunks.push(cur.join(' '));
+      // Weight = words plus a little for the pause after punctuation.
+      const weights = chunks.map((c) => c.split(' ').length + (/[.!?]["')]?$/.test(c) ? 0.6 : /[,;:]$/.test(c) ? 0.3 : 0));
+      const total = weights.reduce((a, b) => a + b, 0);
+      const speakSecs = spoken > 0 ? spoken : Math.min(sceneDuration, Math.max(1, narration.split(' ').length / 2.5));
+      let t = 0.05;
+      chunks.forEach((chunk, ci) => {
+        const dur = (weights[ci] / total) * Math.max(0.5, speakSecs - 0.1);
+        const from = t;
+        const to = ci === chunks.length - 1 ? sceneDuration : t + dur;
+        t += dur;
+        const lines = wrap(chunk, 24).slice(0, 2);
+        const top = Math.round(1280 * 0.72 - ((lines.length - 1) * 58) / 2);
+        lines.forEach((line, li) => captionFilters.push(drawLine(line, { size: 40, y: top + li * 58, alpha: 0.45, enable: `between(t,${from.toFixed(2)},${to.toFixed(2)})` })));
+      });
+    }
+
+    // Small credit for photos that require attribution.
+    if (scene.imageCredit) captionFilters.push(drawLine(clean(scene.imageCredit).slice(0, 70), { size: 14, y: 1280 - 44, alpha: 0.35 }));
 
     // Ken Burns zoompan filter
     const zoomExpr = sceneIdx % 2 === 0
@@ -139,7 +193,8 @@ class VideoRenderer {
       args.push('-f', 'lavfi', '-i', `color=c=0x0f172a:s=720x1280:d=${sceneDuration}`);
     }
 
-    if (audioPath && fs.existsSync(audioPath)) {
+    const hasAudio = Boolean(audioPath && fs.existsSync(audioPath));
+    if (hasAudio) {
       args.push('-i', audioPath);
     } else {
       // Silent audio generator so concat never fails
@@ -152,12 +207,15 @@ class VideoRenderer {
       '-map', '1:a:0',
       '-t', `${sceneDuration}`,
       '-vf', vf,
+      // Pad narration with silence to the scene length; every clip gets identical audio settings for joining.
+      ...(hasAudio ? ['-af', 'apad'] : []),
+      '-ar', '44100',
+      '-ac', '2',
       '-c:v', 'libx264',
       '-preset', 'fast',
       '-pix_fmt', 'yuv420p',
       '-c:a', 'aac',
       '-b:a', '192k',
-      '-shortest',
       clipOut
     );
 
